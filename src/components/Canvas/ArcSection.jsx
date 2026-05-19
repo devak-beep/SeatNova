@@ -20,7 +20,7 @@ export default function ArcSection({ section, selected, multiSelected, onClick, 
 
   const { seats, seatR } = useMemo(() => generateArcSeats(section), 
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [startAngle, endAngle, innerR, outerR, cx, cy, JSON.stringify(section.rowGroups)])
+    [startAngle, endAngle, innerR, outerR, cx, cy, section.rowSpacing, section.colSpacing, JSON.stringify(section.rowGroups), JSON.stringify(section.colGroups), JSON.stringify(section.gridLayout)])
 
   return (
     <g>

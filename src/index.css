@@ -1,0 +1,16 @@
+body { margin: 0; font-family: system-ui, sans-serif; }
+
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 1000px var(--autofill-bg, #111118) inset !important;
+  -webkit-text-fill-color: var(--autofill-color, #f1f1f5) !important;
+  caret-color: var(--autofill-color, #f1f1f5);
+  transition: background-color 9999s ease-in-out 0s;
+}
+
+/* Hide number input spinners globally */
+input[type=number]::-webkit-inner-spin-button,
+input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+input[type=number] { -moz-appearance: textfield; }

@@ -4,6 +4,12 @@ import { useStore } from '../store/useStore'
 import { themes } from '../theme'
 import SeatView3D from '../components/Canvas/SeatView3D'
 
+class Safe extends React.Component {
+  state = { err: false }
+  static getDerivedStateFromError() { return { err: true } }
+  render() { return this.state.err ? null : this.props.children }
+}
+
 // Status colors
 const STATUS_COLOR = {
   available:  null,        // use section color
@@ -32,20 +38,22 @@ function seatId(secLabel, rowNum, seatNum) {
 }
 
 function generateSeatsWithIds(sec) {
-  const groups = sec.rowGroups || [{ rows: 1, seatsPerRow: sec.totalSeats || 0 }]
   let positions
   if (sec.type === 'arc') positions = generateArcSeats(sec).seats
   else if (sec.type === 'rect') positions = generateRectSeats(sec).seats
   else if (sec.type === 'poly') positions = generatePolySeats(sec).seats
   else positions = []
 
+  // Block-layout seats already have correct IDs (e.g. S2-Block1-S1, S2-Block1-R1C1)
+  if (sec.gridLayout?.blocks?.length > 0) return positions
+
+  const groups = sec.rowGroups || [{ rows: 1, seatsPerRow: sec.totalSeats || 0 }]
   const ids = []
-  let rowNum = 1, idx = 0
+  let rowNum = 1
   for (const g of groups) {
     for (let r = 0; r < (g.rows || 1); r++) {
       for (let s = 1; s <= (g.seatsPerRow || 0); s++) {
         ids.push(seatId(sec.label, rowNum, s))
-        idx++
       }
       rowNum++
     }
@@ -262,7 +270,15 @@ export default function VenueRenderer({ venueData: _venueData }) {
   const cartSections = useMemo(() => {
     const map = {}
     for (const sec of sections) {
-      if (!(sec.showSeats ?? true)) {
+      if (sec.type === 'table') {
+        if (sec.bookBySeat) {
+          const count = [...cart].filter(id => id.startsWith(sec.label + '-Chair')).length
+          if (count > 0) map[sec.id] = { sec, count, simple: false }
+        } else {
+          const entry = simpleCart.find(e => e.sec.id === sec.id)
+          if (entry) map[sec.id] = { sec, count: entry.qty, simple: true }
+        }
+      } else if (!(sec.showSeats ?? true)) {
         const entry = simpleCart.find(e => e.sec.id === sec.id)
         if (entry) map[sec.id] = { sec, count: entry.qty, simple: true }
       } else {
@@ -277,6 +293,7 @@ export default function VenueRenderer({ venueData: _venueData }) {
     let total = 0
     for (const { sec, count, simple } of cartSections) {
       if (simple) total += (sec.price || 0) * count
+      else if (sec.type === 'table') total += count * (sec.price || 0)
       else total += [...cart].filter(id => id.startsWith(sec.label + '-')).reduce((s, id) => s + (seatMeta[id]?.price ?? sec.price ?? 0), 0)
     }
     return total
@@ -322,15 +339,27 @@ export default function VenueRenderer({ venueData: _venueData }) {
             const handleClick = () => {
               if (didPanRef.current) { didPanRef.current = false; return }
               if (isSold || isReserved) return
+              // Table: bookBySeat chairs handle their own clicks; otherwise increment qty in cart
+              if (sec.type === 'table') {
+                if (sec.bookBySeat) return  // chairs handle clicks directly
+                const maxSeats = sec.tableShape === 'rect'
+                  ? (sec.seatsTop ?? 2) + (sec.seatsBottom ?? 2) + (sec.seatsLeft ?? 1) + (sec.seatsRight ?? 1)
+                  : (sec.chairs ?? 8)
+                const existing = simpleCart.find(e => e.sec.id === sec.id)
+                if (existing) {
+                  if (existing.qty >= maxSeats) return
+                  setSimpleCart(p => p.map(e => e.sec.id === sec.id ? { ...e, qty: e.qty + 1 } : e))
+                } else {
+                  setSimpleCart(p => [...p, { sec, qty: 1, maxSeats }])
+                }
+                return
+              }
               if (!(sec.showSeats ?? true)) {
                 const existing = simpleCart.find(e => e.sec.id === sec.id)
                 setQtyPicker({ sec, qty: existing?.qty || 1 })
                 return
               }
-              if (isExpanded) { 
-                resetZoom()
-                return 
-              }
+              if (isExpanded) return
               zoomToSection(sec)
             }
 
@@ -378,6 +407,61 @@ export default function VenueRenderer({ venueData: _venueData }) {
                   {!isSold && <text x={secCx} y={secCy} textAnchor="middle" dominantBaseline="middle" fontSize={11} fill="#fff" fontWeight="700" style={{ pointerEvents: 'none', userSelect: 'none' }}>{sec.label}</text>}
                 </g>
               )
+            } else if (sec.type === 'table') {
+              // Generate chair positions inline (same logic as TableSection)
+              const chairR = Math.max(6, Math.min(sec.tableW ?? 100, sec.tableH ?? 60) * 0.12)
+              const gap = chairR * 0.6
+              const blocked = new Set(sec.blockedSeats || [])
+              let chairPositions = []
+              if (sec.tableShape === 'round') {
+                const total = (sec.chairs ?? 8) + (sec.openSpaces ?? 0)
+                const tableRadius = (sec.autoRadius ?? true)
+                  ? Math.max((sec.tableW ?? 80) / 2, (total * (chairR * 2 + gap)) / (2 * Math.PI))
+                  : (sec.tableW ?? 80) / 2
+                const orbitR = tableRadius + chairR + gap
+                for (let i = 0; i < total; i++) {
+                  const angle = (i / total) * 2 * Math.PI - Math.PI / 2
+                  chairPositions.push({ cx: sec.x + Math.cos(angle) * orbitR, cy: sec.y + Math.sin(angle) * orbitR, isOpen: i >= (sec.chairs ?? 8), id: `${sec.label}-Chair${i + 1}` })
+                }
+              } else {
+                const top = sec.seatsTop ?? 2, bottom = sec.seatsBottom ?? 2
+                const left = sec.seatsLeft ?? 1, right = sec.seatsRight ?? 1
+                const hw = (sec.tableW ?? 100) / 2, hh = (sec.tableH ?? 60) / 2
+                const ox = hw + chairR + gap, oy = hh + chairR + gap
+                const addSide = (count, getPos) => { for (let i = 0; i < count; i++) { const t2 = count > 1 ? (i + 0.5) / count : 0.5; chairPositions.push({ ...getPos(t2), isOpen: false, id: `${sec.label}-Chair${chairPositions.length + 1}` }) } }
+                addSide(top,    t2 => ({ cx: sec.x - hw + t2 * (sec.tableW ?? 100), cy: sec.y - oy }))
+                addSide(right,  t2 => ({ cx: sec.x + ox, cy: sec.y - hh + t2 * (sec.tableH ?? 60) }))
+                addSide(bottom, t2 => ({ cx: sec.x - hw + t2 * (sec.tableW ?? 100), cy: sec.y + oy }))
+                addSide(left,   t2 => ({ cx: sec.x - ox, cy: sec.y - hh + t2 * (sec.tableH ?? 60) }))
+              }
+              const tableRadius2 = (sec.autoRadius ?? true) && sec.tableShape === 'round'
+                ? Math.max((sec.tableW ?? 80) / 2, (((sec.chairs ?? 8) + (sec.openSpaces ?? 0)) * (chairR * 2 + gap)) / (2 * Math.PI))
+                : (sec.tableW ?? 80) / 2
+              const tableInCart = !sec.bookBySeat && simpleCart.some(e => e.sec.id === sec.id)
+              shape = (
+                <g key={sec.id} transform={`rotate(${rot},${sec.x},${sec.y})`}
+                  onClick={handleClick} onMouseEnter={handleHover} onMouseLeave={() => setHovered(null)}
+                  style={{ cursor: isSold || isReserved ? 'not-allowed' : 'pointer', filter: tableInCart ? `drop-shadow(0 0 8px ${fillColor}) drop-shadow(0 0 16px ${fillColor}88)` : undefined }}>
+                  {sec.tableShape === 'round'
+                    ? <circle cx={sec.x} cy={sec.y} r={tableRadius2} fill={fillColor} fillOpacity={isSold ? 0.4 : tableInCart ? 1 : 0.75} stroke="rgba(0,0,0,0.25)" strokeWidth={1} />
+                    : <rect x={sec.x - (sec.tableW ?? 100) / 2} y={sec.y - (sec.tableH ?? 60) / 2} width={sec.tableW ?? 100} height={sec.tableH ?? 60} rx={8} fill={fillColor} fillOpacity={isSold ? 0.4 : tableInCart ? 1 : 0.75} stroke="rgba(0,0,0,0.25)" strokeWidth={1} />
+                  }
+                  {(sec.labelVisible ?? true) && <text x={sec.x} y={sec.y} textAnchor="middle" dominantBaseline="middle" fontSize={Math.max(8, Math.min(sec.tableW ?? 100, sec.tableH ?? 60) * 0.22)} fill="#fff" fontWeight="700" style={{ pointerEvents: 'none', userSelect: 'none' }}>{sec.label}</text>}
+                  {chairPositions.map((p, i) => {
+                    const inCart = cart.has(p.id)
+                    return (
+                      <circle key={i} cx={p.cx} cy={p.cy} r={chairR}
+                        fill={p.isOpen ? 'transparent' : blocked.has(p.id) ? '#6b7280' : inCart ? fillColor : '#f8fafc'}
+                        fillOpacity={p.isOpen ? 0 : inCart ? 1 : 0.9}
+                        stroke={p.isOpen ? 'rgba(255,255,255,0.15)' : blocked.has(p.id) ? '#4b5563' : inCart ? '#fff' : fillColor}
+                        strokeWidth={inCart ? 2 : 1.5} strokeDasharray={p.isOpen ? '3 2' : undefined}
+                        style={{ cursor: sec.bookBySeat && !p.isOpen ? 'pointer' : 'default' }}
+                        onClick={sec.bookBySeat && !p.isOpen && !isSold ? e => { e.stopPropagation(); toggleSeat(p.id) } : undefined}
+                      />
+                    )
+                  })}
+                </g>
+              )
             }
             return shape
           })}
@@ -399,7 +483,7 @@ export default function VenueRenderer({ venueData: _venueData }) {
               : sec.type === 'poly' ? sec.points?.reduce((s, p) => s + p.y, 0) / (sec.points?.length || 1)
               : 0
             
-            const content = seats.map(seat => {
+            const content = seats.filter(seat => !seat.removed).map(seat => {
               if (blocked.has(seat.id)) {
                 return (
                   <circle key={seat.id} cx={seat.x} cy={seat.y} r={seatR * 1.1}
@@ -490,7 +574,7 @@ export default function VenueRenderer({ venueData: _venueData }) {
         {/* 3D View Preview */}
         {expandedId && (
           <div style={{ width: '100%', height: 140, background: '#1a1a2e', borderRadius: 8, marginBottom: 12, overflow: 'hidden', position: 'relative' }}>
-            <SeatView3D section={sections.find(s => s.id === expandedId)} fieldType={venue.field} preview stageX={venue.stageX} stageY={venue.stageY} stageW={venue.stageW} stageH={venue.stageH} venueShape={venue.shape} />
+            <Safe><SeatView3D section={sections.find(s => s.id === expandedId)} fieldType={venue.field} preview stageX={venue.stageX} stageY={venue.stageY} stageW={venue.stageW} stageH={venue.stageH} venueShape={venue.shape} /></Safe>
             <div style={{ position: 'absolute', bottom: 6, left: 8, background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: 10, fontWeight: 600, padding: '3px 8px', borderRadius: 4 }}>
               👁 View from this seat
             </div>
@@ -512,14 +596,14 @@ export default function VenueRenderer({ venueData: _venueData }) {
         {qtyPicker && (
           <div style={{ background: t.inputBg, border: `1px solid #3b82f6`, borderRadius: 8, padding: 12, marginBottom: 12 }}>
             <div style={{ fontWeight: 600, fontSize: 13, color: t.inputColor, marginBottom: 2 }}>{qtyPicker.sec.label}</div>
-            <div style={{ fontSize: 11, color: t.labelColor, marginBottom: 10 }}>₹{qtyPicker.sec.price?.toLocaleString()} / seat · {qtyPicker.sec.totalSeats} available</div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+            <div style={{ fontSize: 11, color: t.labelColor, marginBottom: 10 }}>₹{(qtyPicker.sec.price || 0).toLocaleString()} / seat · {qtyPicker.sec.type === 'table' ? ((qtyPicker.sec.seatsTop ?? 2) + (qtyPicker.sec.seatsBottom ?? 2) + (qtyPicker.sec.seatsLeft ?? 1) + (qtyPicker.sec.seatsRight ?? 1)) : (qtyPicker.sec.totalSeats ?? '?')} available</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, justifyContent: 'center' }}>
               <button onClick={() => setQtyPicker(p => ({ ...p, qty: Math.max(1, p.qty - 1) }))}
                 style={{ width: 28, height: 28, borderRadius: 5, border: `1px solid ${t.inputBorder}`, background: t.panelBg, color: t.inputColor, fontSize: 16, cursor: 'pointer' }}>−</button>
-              <input type="number" min={1} max={qtyPicker.sec.totalSeats} value={qtyPicker.qty}
-                onChange={e => setQtyPicker(p => ({ ...p, qty: Math.max(1, Math.min(p.sec.totalSeats, Number(e.target.value) || 1)) }))}
-                style={{ flex: 1, textAlign: 'center', background: t.panelBg, border: `1px solid ${t.inputBorder}`, borderRadius: 5, color: t.inputColor, padding: '4px', fontSize: 14, fontWeight: 700 }} />
-              <button onClick={() => setQtyPicker(p => ({ ...p, qty: Math.min(p.sec.totalSeats, p.qty + 1) }))}
+              <input type="number" min={1} value={qtyPicker.qty}
+                onChange={e => setQtyPicker(p => ({ ...p, qty: Math.max(1, Number(e.target.value) || 1) }))}
+                style={{ width: 48, textAlign: 'center', background: t.panelBg, border: `1px solid ${t.inputBorder}`, borderRadius: 5, color: t.inputColor, padding: '4px', fontSize: 14, fontWeight: 700 }} />
+              <button onClick={() => setQtyPicker(p => ({ ...p, qty: p.qty + 1 }))}
                 style={{ width: 28, height: 28, borderRadius: 5, border: `1px solid ${t.inputBorder}`, background: t.panelBg, color: t.inputColor, fontSize: 16, cursor: 'pointer' }}>+</button>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: t.labelColor, marginBottom: 10 }}>
@@ -541,7 +625,7 @@ export default function VenueRenderer({ venueData: _venueData }) {
           ? <div style={{ fontSize: 12, color: t.labelColor, textAlign: 'center', padding: '20px 0' }}>No seats selected.<br />Click a section to get started.</div>
           : <>
             {cartSections.map(({ sec, count, simple }) => {
-              if (simple) return (
+              if (simple && sec.type !== 'table') return (
                 <div key={sec.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13, color: t.inputColor, marginBottom: 8, padding: '6px 8px', background: t.inputBg, borderRadius: 6 }}>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontWeight: 600 }}>{sec.label}</div>
@@ -555,6 +639,32 @@ export default function VenueRenderer({ venueData: _venueData }) {
                 </div>
               )
               const cartSeats = [...cart].filter(id => id.startsWith(sec.label + '-'))
+              // Table bookBySeat: simple display
+              if (sec.type === 'table') {
+                const maxSeats = sec.tableShape === 'rect'
+                  ? (sec.seatsTop ?? 2) + (sec.seatsBottom ?? 2) + (sec.seatsLeft ?? 1) + (sec.seatsRight ?? 1)
+                  : (sec.chairs ?? 8)
+                return (
+                <div key={sec.id} style={{ fontSize: 13, color: t.inputColor, marginBottom: 8, padding: '8px 10px', background: t.inputBg, borderRadius: 6 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <span style={{ fontWeight: 600 }}>{sec.label}</span>
+                    <button onClick={() => setSimpleCart(p => p.filter(e => e.sec.id !== sec.id))}
+                      style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: 14, padding: 0 }}>✕</button>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', background: t.panelBg, border: `1px solid ${t.inputBorder}`, borderRadius: 8, overflow: 'hidden' }}>
+                      <button onClick={() => setSimpleCart(p => p.map(e => e.sec.id === sec.id ? { ...e, qty: Math.max(1, e.qty - 1) } : e))}
+                        style={{ width: 30, height: 28, border: 'none', background: 'none', color: t.inputColor, cursor: 'pointer', fontSize: 16, fontWeight: 300 }}>−</button>
+                      <span style={{ minWidth: 32, textAlign: 'center', fontSize: 14, fontWeight: 700, color: t.inputColor }}>{count}</span>
+                      <button onClick={() => setSimpleCart(p => p.map(e => e.sec.id === sec.id ? { ...e, qty: Math.min(maxSeats, e.qty + 1) } : e))}
+                        disabled={count >= maxSeats}
+                        style={{ width: 30, height: 28, border: 'none', background: 'none', color: count >= maxSeats ? t.labelColor : t.inputColor, cursor: count >= maxSeats ? 'not-allowed' : 'pointer', fontSize: 16, fontWeight: 300, opacity: count >= maxSeats ? 0.4 : 1 }}>+</button>
+                    </div>
+                    <span style={{ fontSize: 11, color: t.labelColor }}>× ₹{(sec.price || 0).toLocaleString()} / {maxSeats} max</span>
+                    <span style={{ fontWeight: 700 }}>₹{(count * (sec.price || 0)).toLocaleString()}</span>
+                  </div>
+                </div>
+              )}
               // Group by price
               const priceGroups = {}
               for (const id of cartSeats) {

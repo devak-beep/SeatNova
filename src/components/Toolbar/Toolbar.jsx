@@ -1,6 +1,6 @@
 import React, { useContext, useState } from 'react'
 import { useStore } from '../../store/useStore'
-import { ThemeContext } from '../../App'
+import { ThemeContext } from '../../EditorApp'
 
 // Generate seat IDs for a section: {sectionLabel}-R{row}S{seat}
 function getSeatIds(sec) {
@@ -219,18 +219,155 @@ function SpacingModal({ onClose, t, ids, applySpacing }) {
 }
 
 const TOOLS = [
-  { id: 'select', label: '↖ Select', title: 'Select & edit sections' },
-  { id: 'multiselect', label: '☑ Multi', title: 'Multi-select sections for spacing' },
-  { id: 'arc',    label: '◔ Arc',    title: 'Click start, move, click end to draw arc section' },
-  { id: 'rect',   label: '▭ Rect',   title: 'Drag to draw rectangular section' },
-  { id: 'poly',   label: '✦ Poly',   title: 'Click to place points, double-click or click first point to close' },
+  { id: 'select', icon: '↖', label: 'Select', title: 'Select & edit sections' },
+  { id: 'multiselect', icon: '☑', label: 'Multi', title: 'Multi-select sections for spacing' },
+  { id: 'arc', icon: '◔', label: 'Arc', title: 'Click start, move, click end to draw arc section' },
+  { id: 'rect', icon: '▭', label: 'Rect', title: 'Drag to draw rectangular section' },
+  { id: 'poly', icon: '✦', label: 'Poly', title: 'Click to place points, double-click or click first point to close' },
+  { id: 'row', icon: '⋯', label: 'Row', title: 'Click to place a row of seats' },
+  { id: 'table', icon: '⬡', label: 'Table', title: 'Click to place a table with chairs' },
 ]
 
-export default function Toolbar({ onPreview }) {
+function AuthModal({ onClose, onAuth, t }) {
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [mode, setMode] = useState('login') // 'login' | 'signup'
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  const handle = async () => {
+    setLoading(true); setError('')
+    try {
+      const fn = mode === 'login'
+        ? supabase.auth.signInWithPassword({ email, password })
+        : supabase.auth.signUp({ email, password })
+      const { error: err } = await fn
+      if (err) throw err
+      onAuth()
+      onClose()
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const inp = { width: '100%', padding: '8px 12px', borderRadius: 6, border: `1px solid ${t.panelBorder}`, background: t.inputBg, color: t.inputColor, fontSize: 14, boxSizing: 'border-box' }
+
+  return (
+    <>
+      <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 299, background: 'rgba(0,0,0,0.5)' }} />
+      <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', zIndex: 300, background: t.panelBg, border: `1px solid ${t.panelBorder}`, borderRadius: 12, width: 360, padding: 24, boxShadow: '0 16px 48px rgba(0,0,0,0.4)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+          <span style={{ fontWeight: 700, fontSize: 15, color: t.inputColor }}>☁ {mode === 'login' ? 'Sign In' : 'Sign Up'}</span>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: t.labelColor, fontSize: 18, cursor: 'pointer' }}>✕</button>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <input placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} style={inp} />
+          <input placeholder="Password" type="password" value={password} onChange={e => setPassword(e.target.value)} style={inp} />
+          {error && <div style={{ fontSize: 12, color: '#f87171' }}>{error}</div>}
+          <button onClick={handle} disabled={loading} style={{ padding: '9px', borderRadius: 6, border: 'none', background: '#7c3aed', color: '#fff', fontSize: 14, cursor: 'pointer', fontWeight: 600 }}>
+            {loading ? '...' : mode === 'login' ? 'Sign In' : 'Sign Up'}
+          </button>
+          <button onClick={() => setMode(m => m === 'login' ? 'signup' : 'login')} style={{ background: 'none', border: 'none', color: t.labelColor, fontSize: 12, cursor: 'pointer' }}>
+            {mode === 'login' ? "Don't have an account? Sign Up" : 'Already have an account? Sign In'}
+          </button>
+        </div>
+      </div>
+    </>
+  )
+}
+
+function CloudModal({ onClose, t, storeState, importJSON }) {
+  const [venues, setVenues] = useState(null)
+  const [status, setStatus] = useState('')
+
+  React.useEffect(() => {
+    loadVenues().then(setVenues).catch(e => setStatus(e.message))
+  }, [])
+
+  const handleSave = async () => {
+    setStatus('Saving...')
+    try {
+      await saveVenue(storeState)
+      setStatus('Saved ✓')
+      loadVenues().then(setVenues)
+    } catch (e) { setStatus('Error: ' + e.message) }
+  }
+
+  const handleLoad = async (id) => {
+    setStatus('Loading...')
+    try {
+      const v = await loadVenue(id)
+      importJSON(JSON.stringify({
+        venue: { name: v.name, shape: v.shape, field: v.field_type, fieldX: v.field_x, fieldY: v.field_y, fieldScale: v.field_scale, stageX: v.stage_x, stageY: v.stage_y, stageW: v.stage_w, stageH: v.stage_h, canvasSize: v.canvas_size },
+        categories: v.categories,
+        sections: v.sections,
+      }))
+      setStatus('Loaded ✓')
+      onClose()
+    } catch (e) { setStatus('Error: ' + e.message) }
+  }
+
+  const handleDelete = async (id) => {
+    if (!confirm('Delete this venue?')) return
+    try {
+      await deleteVenue(id)
+      setVenues(vs => vs.filter(v => v.id !== id))
+    } catch (e) { setStatus('Error: ' + e.message) }
+  }
+
+  return (
+    <>
+      <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 299, background: 'rgba(0,0,0,0.5)' }} />
+      <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', zIndex: 300, background: t.panelBg, border: `1px solid ${t.panelBorder}`, borderRadius: 12, width: 460, maxHeight: '70vh', display: 'flex', flexDirection: 'column', boxShadow: '0 16px 48px rgba(0,0,0,0.4)' }}>
+        <div style={{ padding: '16px 20px', borderBottom: `1px solid ${t.panelBorder}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span style={{ fontWeight: 700, fontSize: 15, color: t.inputColor }}>☁ Cloud Venues</span>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: t.labelColor, fontSize: 18, cursor: 'pointer' }}>✕</button>
+        </div>
+        <div style={{ padding: '16px 20px', borderBottom: `1px solid ${t.panelBorder}`, display: 'flex', gap: 10, alignItems: 'center' }}>
+          <button onClick={handleSave} style={{ padding: '7px 16px', borderRadius: 6, border: 'none', background: '#059669', color: '#fff', fontSize: 13, cursor: 'pointer', fontWeight: 600 }}>
+            ⬆ Save Current
+          </button>
+          {status && <span style={{ fontSize: 12, color: status.includes('Error') ? '#f87171' : '#4ade80' }}>{status}</span>}
+        </div>
+        <div style={{ overflowY: 'auto', flex: 1, padding: '12px 20px' }}>
+          {!venues ? <div style={{ fontSize: 13, color: t.labelColor }}>Loading...</div>
+            : venues.length === 0 ? <div style={{ fontSize: 13, color: t.labelColor }}>No saved venues yet.</div>
+            : venues.map(v => (
+              <div key={v.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', borderBottom: `1px solid ${t.panelBorder}` }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: t.inputColor }}>{v.name}</div>
+                  <div style={{ fontSize: 11, color: t.labelColor }}>{new Date(v.updated_at).toLocaleString()}</div>
+                </div>
+                <button onClick={() => handleLoad(v.id)} style={{ padding: '5px 12px', borderRadius: 6, border: 'none', background: '#1d4ed8', color: '#fff', fontSize: 12, cursor: 'pointer' }}>Load</button>
+                <button onClick={() => handleDelete(v.id)} style={{ padding: '5px 10px', borderRadius: 6, border: 'none', background: '#dc2626', color: '#fff', fontSize: 12, cursor: 'pointer' }}>✕</button>
+              </div>
+            ))
+          }
+        </div>
+      </div>
+    </>
+  )
+}
+
+export default function Toolbar({ onPreview, onSave, onHome, saveStatus }) {
   const { tool, setTool, venueName, exportJSON, importJSON, undo, redo, past, future, selectedId, selectedIds, duplicateSection, theme, toggleTheme, applySpacing } = useStore()
   const t = useContext(ThemeContext)
   const [showValidate, setShowValidate] = useState(false)
   const [showSpacing, setShowSpacing] = useState(false)
+
+  const handleSave = async () => { if (onSave) await onSave() }
+
+  const statusLabel = saveStatus === 'saving' ? 'Saving…'
+    : saveStatus === 'unsaved' ? 'Unsaved'
+    : 'Saved'
+  const statusColor = saveStatus === 'saving' ? '#f59e0b'
+    : saveStatus === 'unsaved' ? '#f87171'
+    : '#4ade80'
+  const statusDot = saveStatus === 'saving' ? '#f59e0b'
+    : saveStatus === 'unsaved' ? '#f87171'
+    : '#4ade80'
 
   const handleExport = () => {
     const json = exportJSON()
@@ -257,75 +394,152 @@ export default function Toolbar({ onPreview }) {
     input.click()
   }
 
-  const bar = { height: 64, background: t.panelBg, borderBottom: `1px solid ${t.panelBorder}`, display: 'flex', alignItems: 'center', gap: 12, padding: '0 16px', flexShrink: 0 }
-  const btn = { padding: '5px 12px', borderRadius: 6, border: `1px solid ${t.btnBorder}`, background: t.btnBg, color: t.btnColor, fontSize: 13, cursor: 'pointer' }
-  const active = { background: '#1d4ed8', borderColor: '#3b82f6', color: '#fff' }
+  const isDark = theme === 'dark'
+
+  const bar = {
+    height: 56,
+    background: t.panelBg,
+    borderBottom: `1px solid ${t.panelBorder}`,
+    display: 'flex',
+    alignItems: 'center',
+    gap: 0,
+    padding: '0 16px',
+    flexShrink: 0,
+  }
+
+  // Divider between groups
+  const divider = {
+    width: 1,
+    height: 28,
+    background: t.panelBorder,
+    margin: '0 10px',
+    flexShrink: 0,
+  }
+
+  const iconBtn = (active, color) => ({
+    display: 'flex', alignItems: 'center', gap: 5,
+    padding: '5px 10px', borderRadius: 7,
+    border: active ? `1px solid ${color || '#3b82f6'}` : '1px solid transparent',
+    background: active ? (isDark ? 'rgba(59,130,246,0.15)' : 'rgba(59,130,246,0.1)') : 'transparent',
+    color: active ? (color || '#60a5fa') : t.btnColor,
+    fontSize: 12, fontWeight: active ? 600 : 400,
+    cursor: 'pointer', transition: 'all 0.15s', whiteSpace: 'nowrap',
+  })
+
+  const actionBtn = (bg, hoverBg) => ({
+    display: 'flex', alignItems: 'center', gap: 5,
+    padding: '5px 12px', borderRadius: 7,
+    border: 'none',
+    background: bg,
+    color: '#fff',
+    fontSize: 12, fontWeight: 600,
+    cursor: 'pointer', whiteSpace: 'nowrap',
+  })
+
+  const ghostBtn = {
+    display: 'flex', alignItems: 'center', gap: 5,
+    padding: '5px 10px', borderRadius: 7,
+    border: `1px solid ${t.panelBorder}`,
+    background: 'transparent',
+    color: t.btnColor,
+    fontSize: 12, fontWeight: 400,
+    cursor: 'pointer', whiteSpace: 'nowrap',
+  }
 
   return (
     <div style={bar}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginRight: 8 }}>
-        <svg width="40" height="40" viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <circle cx="40" cy="40" r="38" fill="url(#tbBg)" opacity={theme === 'dark' ? 0.15 : 0.08} />
-          <circle cx="40" cy="40" r="36" stroke="url(#tbMain)" strokeWidth="2.5" opacity={theme === 'dark' ? 0.7 : 0.6} />
-          <rect x="27" y="32" width="26" height="16" rx="1.5" fill="url(#tbStage)" opacity="0.4" />
-          <rect x="29" y="34" width="22" height="12" rx="1" fill="url(#tbStageC)" opacity={theme === 'dark' ? 0.5 : 0.7} />
-          <line x1="40" y1="34" x2="40" y2="46" stroke="url(#tbMain)" strokeWidth="0.5" opacity="0.5" />
-          <g opacity="0.95">
-            <circle cx="38" cy="12" r="2.5" fill="url(#tbSeat)" /><circle cx="44" cy="12" r="2.5" fill="url(#tbSeat)" />
-            <circle cx="35" cy="16" r="2" fill="url(#tbSeat)" opacity="0.85" /><circle cx="41" cy="16" r="2" fill="url(#tbSeat)" opacity="0.85" />
-            <circle cx="47" cy="16" r="2" fill="url(#tbSeat)" opacity="0.85" />
-            <circle cx="68" cy="38" r="2.5" fill="url(#tbSeat)" /><circle cx="68" cy="44" r="2.5" fill="url(#tbSeat)" />
-            <circle cx="64" cy="35" r="2" fill="url(#tbSeat)" opacity="0.85" /><circle cx="64" cy="41" r="2" fill="url(#tbSeat)" opacity="0.85" />
-            <circle cx="64" cy="47" r="2" fill="url(#tbSeat)" opacity="0.85" />
-            <circle cx="44" cy="68" r="2.5" fill="url(#tbSeat)" /><circle cx="38" cy="68" r="2.5" fill="url(#tbSeat)" />
-            <circle cx="47" cy="64" r="2" fill="url(#tbSeat)" opacity="0.85" /><circle cx="41" cy="64" r="2" fill="url(#tbSeat)" opacity="0.85" />
-            <circle cx="35" cy="64" r="2" fill="url(#tbSeat)" opacity="0.85" />
-            <circle cx="12" cy="44" r="2.5" fill="url(#tbSeat)" /><circle cx="12" cy="38" r="2.5" fill="url(#tbSeat)" />
-            <circle cx="16" cy="47" r="2" fill="url(#tbSeat)" opacity="0.85" /><circle cx="16" cy="41" r="2" fill="url(#tbSeat)" opacity="0.85" />
-            <circle cx="16" cy="35" r="2" fill="url(#tbSeat)" opacity="0.85" />
-          </g>
-          <defs>
-            {theme === 'dark' ? <>
-              <radialGradient id="tbBg"><stop offset="0%" stopColor="#c084fc" /><stop offset="100%" stopColor="#a78bfa" /></radialGradient>
-              <linearGradient id="tbMain"><stop offset="0%" stopColor="#d8b4fe" /><stop offset="50%" stopColor="#f0abfc" /><stop offset="100%" stopColor="#c084fc" /></linearGradient>
-              <linearGradient id="tbSeat"><stop offset="0%" stopColor="#e9d5ff" /><stop offset="50%" stopColor="#d8b4fe" /><stop offset="100%" stopColor="#c084fc" /></linearGradient>
-              <linearGradient id="tbStage"><stop offset="0%" stopColor="#a78bfa" /><stop offset="100%" stopColor="#7c3aed" /></linearGradient>
-              <linearGradient id="tbStageC"><stop offset="0%" stopColor="#c084fc" /><stop offset="100%" stopColor="#a78bfa" /></linearGradient>
-            </> : <>
-              <radialGradient id="tbBg"><stop offset="0%" stopColor="#7c3aed" /><stop offset="100%" stopColor="#9333ea" /></radialGradient>
-              <linearGradient id="tbMain"><stop offset="0%" stopColor="#7c3aed" /><stop offset="50%" stopColor="#a855f7" /><stop offset="100%" stopColor="#9333ea" /></linearGradient>
-              <linearGradient id="tbSeat"><stop offset="0%" stopColor="#7c3aed" /><stop offset="50%" stopColor="#9333ea" /><stop offset="100%" stopColor="#6d28d9" /></linearGradient>
-              <linearGradient id="tbStage"><stop offset="0%" stopColor="#e9d5ff" /><stop offset="100%" stopColor="#d8b4fe" /></linearGradient>
-              <linearGradient id="tbStageC"><stop offset="0%" stopColor="#faf5ff" /><stop offset="100%" stopColor="#f3e8ff" /></linearGradient>
-            </>}
-          </defs>
+      {/* Logo */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginRight: 4, flexShrink: 0 }}>
+        <svg width="32" height="32" viewBox="0 0 80 80" fill="none">
+          <circle cx="40" cy="40" r="36" stroke={isDark ? '#6d28d9' : '#7c3aed'} strokeWidth="2.5" opacity="0.6" />
+          <rect x="27" y="32" width="26" height="16" rx="2" fill={isDark ? '#6d28d9' : '#7c3aed'} opacity="0.35" />
+          <circle cx="38" cy="12" r="2.5" fill={isDark ? '#a78bfa' : '#7c3aed'} />
+          <circle cx="44" cy="12" r="2.5" fill={isDark ? '#a78bfa' : '#7c3aed'} />
+          <circle cx="68" cy="38" r="2.5" fill={isDark ? '#a78bfa' : '#7c3aed'} />
+          <circle cx="68" cy="44" r="2.5" fill={isDark ? '#a78bfa' : '#7c3aed'} />
+          <circle cx="44" cy="68" r="2.5" fill={isDark ? '#a78bfa' : '#7c3aed'} />
+          <circle cx="38" cy="68" r="2.5" fill={isDark ? '#a78bfa' : '#7c3aed'} />
+          <circle cx="12" cy="44" r="2.5" fill={isDark ? '#a78bfa' : '#7c3aed'} />
+          <circle cx="12" cy="38" r="2.5" fill={isDark ? '#a78bfa' : '#7c3aed'} />
         </svg>
-        <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1 }}>
-          <span style={{ fontWeight: 700, fontSize: 18, color: theme === 'dark' ? '#d8b4fe' : '#7c3aed' }}>SeatNova</span>
-          <span style={{ fontSize: 11, color: t.labelColor, letterSpacing: '0.05em', marginTop: 2 }}>Venue Layout Builder</span>
+        <div style={{ lineHeight: 1.1 }}>
+          <div style={{ fontWeight: 800, fontSize: 15, color: isDark ? '#a78bfa' : '#7c3aed', letterSpacing: '-0.02em' }}>SeatNova</div>
+          <div style={{ fontSize: 9.5, color: t.labelColor, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Layout Builder</div>
         </div>
       </div>
 
-      <div style={{ flex: 1 }} />
+      <div style={divider} />
 
-      <div style={{ display: 'flex', gap: 4 }}>
-        {TOOLS.map(tool_ => (
-          <button key={tool_.id} title={tool_.title} onClick={() => setTool(tool_.id)}
-            style={{ ...btn, ...(tool === tool_.id ? active : {}) }}>
-            {tool_.label}
+      {/* Undo / Redo */}
+      <div style={{ display: 'flex', gap: 2, flexShrink: 0 }}>
+        <button title="Undo (Ctrl+Z)" onClick={() => useStore.getState().undo()} disabled={!past.length}
+          style={{ ...ghostBtn, opacity: past.length ? 1 : 0.3, padding: '5px 8px', fontSize: 14 }}>↩</button>
+        <button title="Redo (Ctrl+Y)" onClick={() => useStore.getState().redo()} disabled={!future.length}
+          style={{ ...ghostBtn, opacity: future.length ? 1 : 0.3, padding: '5px 8px', fontSize: 14 }}>↪</button>
+      </div>
+
+      <div style={divider} />
+
+      {/* Tools */}
+      <div style={{ display: 'flex', gap: 2, flexShrink: 0 }}>
+        {TOOLS.map(t_ => (
+          <button key={t_.id} title={t_.title} onClick={() => setTool(t_.id)}
+            style={iconBtn(tool === t_.id)}>
+            <span style={{ fontSize: 13 }}>{t_.icon}</span>
+            <span>{t_.label}</span>
           </button>
         ))}
       </div>
 
-      <button onClick={toggleTheme} style={{ ...btn, fontSize: 16 }} title="Toggle light/dark mode">
-        {theme === 'dark' ? '☀️' : '🌙'}
-      </button>
+      <div style={{ flex: 1 }} />
 
-      <button onClick={onPreview} style={{ padding: '5px 14px', borderRadius: 6, border: 'none', background: '#7c3aed', color: '#fff', fontSize: 13, cursor: 'pointer', fontWeight: 600 }}>▶ Preview</button>
-      {selectedIds.length > 1 && <button onClick={() => setShowSpacing(true)} style={{ padding: '5px 14px', borderRadius: 6, border: 'none', background: '#ea580c', color: '#fff', fontSize: 13, cursor: 'pointer', fontWeight: 600 }}>⚡ Spacing</button>}
-      <button onClick={() => setShowValidate(true)} style={{ padding: '5px 14px', borderRadius: 6, border: 'none', background: '#0891b2', color: '#fff', fontSize: 13, cursor: 'pointer', fontWeight: 600 }}>✓ Validate</button>
-      <button onClick={handleImport} style={{ padding: '5px 14px', borderRadius: 6, border: 'none', background: '#0f766e', color: '#fff', fontSize: 13, cursor: 'pointer', fontWeight: 600 }}>⬆ Import</button>
-      <button onClick={handleExport} style={{ padding: '5px 14px', borderRadius: 6, border: 'none', background: '#059669', color: '#fff', fontSize: 13, cursor: 'pointer', fontWeight: 600 }}>⬇ Export</button>
+      {/* Venue name pill */}
+      {venueName && (
+        <div style={{ fontSize: 12, color: t.textMuted, background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)', border: `1px solid ${t.panelBorder}`, borderRadius: 20, padding: '3px 12px', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flexShrink: 0 }}>
+          {venueName}
+        </div>
+      )}
+
+      <div style={divider} />
+
+      {/* Actions */}
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
+        {selectedIds.length > 1 && (
+          <button onClick={() => setShowSpacing(true)} style={{ ...actionBtn('#ea580c'), fontSize: 12 }} title="Apply equal spacing">
+            ⚡ Spacing
+          </button>
+        )}
+        <button onClick={() => setShowValidate(true)} style={ghostBtn} title="Validate layout">
+          ✓ Validate
+        </button>
+        <button onClick={handleImport} style={ghostBtn} title="Import JSON">
+          ⬆ Import
+        </button>
+        <button onClick={handleExport} style={ghostBtn} title="Export JSON">
+          ⬇ Export
+        </button>
+        {onSave && (
+          <button onClick={handleSave} style={{ ...actionBtn(isDark ? '#6d28d9' : '#7c3aed') }}>
+            ☁ Save
+          </button>
+        )}
+        {saveStatus && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: statusColor, flexShrink: 0 }}>
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: statusDot, display: 'inline-block' }} />
+            {statusLabel}
+          </div>
+        )}
+        <button onClick={() => onPreview()} style={{ ...actionBtn('#7c3aed'), padding: '5px 14px' }}>
+          ▶ Preview
+        </button>
+        <button onClick={toggleTheme} style={{ ...ghostBtn, padding: '5px 8px', fontSize: 15 }} title="Toggle theme">
+          {isDark ? '☀️' : '🌙'}
+        </button>
+        {onHome && (
+          <button onClick={onHome} style={{ ...ghostBtn, padding: '5px 8px' }} title="Home">⌂</button>
+        )}
+      </div>
+
       {showValidate && <ValidateModal onClose={() => setShowValidate(false)} t={t} />}
       {showSpacing && <SpacingModal onClose={() => setShowSpacing(false)} t={t} ids={selectedIds} applySpacing={applySpacing} />}
     </div>

@@ -6,7 +6,9 @@ import ArcSection from './ArcSection'
 import RectSection from './RectSection'
 import PolySection from './PolySection'
 import { ArcGhost, RectGhost, PolyGhost } from './DrawingGhost'
-import { ThemeContext } from '../../App'
+import RowSection from './RowSection'
+import TableSection from './TableSection'
+import { ThemeContext } from '../../EditorApp'
 
 const ARC_THICKNESS = 80
 const MIN_ZOOM = 0.05
@@ -193,9 +195,14 @@ export default function BuilderCanvas() {
     venueShape, sections, tool, selectedId, selectedIds, fieldSelected, selectField, drawingState,
     selectSection, toggleSelectSection, setDrawingState, addSection, updateSection, commitUpdate, categories,
     past, future, canvasSize, setCanvasSize, floorPlanImage, floorPlanOpacity,
-    floorPlanX, floorPlanY, floorPlanW, floorPlanH, setFloorPlanTransform, toggleBlockSeat,
-    floorPlanLocked, stageLocked,
+    floorPlanX, floorPlanY, floorPlanW, floorPlanH, setFloorPlanTransform, toggleBlockSeat, toggleRemoveSeat,
+    floorPlanLocked, stageLocked, addRow, addTable,
+    selectedRowIdx, setSelectedRowIdx, selectedRowIdxs, toggleSelectedRowIdx, rowSelectMode,
+    blockRowMode, toggleBlockRow,
   } = useStore()
+
+  // Clear row selection when selected section changes
+  React.useEffect(() => { setSelectedRowIdx(null) }, [selectedId])
 
   // Stage uses its own position; other fields are always centered
   const stageRenderX = stageX ?? fieldX
@@ -292,6 +299,7 @@ export default function BuilderCanvas() {
     didInteractRef.current = true
     commitUpdate()
     selectSection(secId)
+    // handle is rowIdx for rect row-curve mode
     interactRef.current = { mode, handle, id: secId, startPt: pt(e), origSec: { ...sec } }
     svgRef.current.setPointerCapture(e.pointerId)
   }, [tool, sections, selectSection, toggleSelectSection, commitUpdate])
@@ -427,6 +435,32 @@ export default function BuilderCanvas() {
       if (hid.includes('w')) { x = o.x + dx; w = Math.max(MIN, o.w - dx) }
       if (hid.includes('n')) { y = o.y + dy; h = Math.max(MIN, o.h - dy) }
       updateSection(ia.id, { x, y, w, h })
+    } else if (ia.mode === 'row-spacing') {
+      const o = ia.origSec
+      // Unrotate dx into the row's local horizontal axis
+      const rot = (o.rotation || 0) * Math.PI / 180
+      const localDx = dx * Math.cos(rot) + dy * Math.sin(rot)
+      const newSpacing = Math.max(10, Math.min(100, o.seatSpacing + localDx / Math.max(1, (o.seats - 1) / 2)))
+      updateSection(ia.id, { seatSpacing: Math.round(newSpacing) })
+    } else if (ia.mode === 'row-curve') {
+      const o = ia.origSec
+      // Unrotate dy into the row's local vertical axis
+      const rot = (o.rotation || 0) * Math.PI / 180
+      const localDy = -dx * Math.sin(rot) + dy * Math.cos(rot)
+      const newCurve = Math.max(-200, Math.min(200, (o.curve || 0) - localDy * 1.5))
+      updateSection(ia.id, { curve: Math.round(newCurve) })
+    } else if (ia.mode === 'rect-row-curve') {
+      const o = ia.origSec
+      const rot = (o.rotation || 0) * Math.PI / 180
+      const localDy = -dx * Math.sin(rot) + dy * Math.cos(rot)
+      const newCurves = [...(o.rowCurves || [])]
+      // apply to all selected rows
+      const idxs = useStore.getState().selectedRowIdxs.length ? useStore.getState().selectedRowIdxs : [ia.handle]
+      idxs.forEach(rowIdx => {
+        const origCurve = newCurves[rowIdx] ?? 0
+        newCurves[rowIdx] = Math.round(Math.max(-200, Math.min(200, origCurve - localDy * 1.5)))
+      })
+      updateSection(ia.id, { rowCurves: newCurves })
     }
   }, [tool, drawingState, setDrawingState, setFieldPos, setFieldScale, updateSection, CX_, CY_])
 
@@ -503,6 +537,12 @@ export default function BuilderCanvas() {
           setDrawingState({ ...drawingState, points: [...drawingState.points, p] })
         }
       }
+    } else if (tool === 'row') {
+      const p = pt(e)
+      addRow({ x: p.x, y: p.y })
+    } else if (tool === 'table') {
+      const p = pt(e)
+      addTable({ x: p.x, y: p.y })
     } else if (tool === 'select') {
       selectSection(null)
       selectField(false)
@@ -716,10 +756,28 @@ export default function BuilderCanvas() {
                 onPointPointerDown={(e, i) => handlePolyPointPointerDown(e, sec.id, i)}
                 onContextMenu={(e) => handleContextMenu(e, sec.id)}
                 onToggleBlockSeat={(seatId) => toggleBlockSeat(sec.id, seatId)} />
+            : sec.type === 'row'
+            ? <RowSection key={sec.id} section={sec} selected={sec.id === selectedId}
+                onPointerDown={(e, mode, handle) => { e.stopPropagation(); selectSection(sec.id); handleSectionPointerDown(e, mode, handle, sec.id) }}
+                onContextMenu={(e) => handleContextMenu(e, sec.id)}
+                onToggleBlockSeat={(seatId) => toggleBlockSeat(sec.id, seatId)} />
+            : sec.type === 'table'
+            ? <TableSection key={sec.id} section={sec} selected={sec.id === selectedId}
+                onPointerDown={(e, mode, handle) => { e.stopPropagation(); selectSection(sec.id); handleSectionPointerDown(e, mode, handle, sec.id) }}
+                onContextMenu={(e) => handleContextMenu(e, sec.id)}
+                onToggleBlockSeat={(seatId) => toggleBlockSeat(sec.id, seatId)}
+                onToggleRemoveSeat={(seatId) => toggleRemoveSeat(sec.id, seatId)} />
             : <RectSection key={sec.id} section={sec} selected={sec.id === selectedId} multiSelected={selectedIds.includes(sec.id)}
                 onPointerDown={(e, mode, handle) => handleSectionPointerDown(e, mode, handle, sec.id)}
                 onContextMenu={(e) => handleContextMenu(e, sec.id)}
-                onToggleBlockSeat={(seatId) => toggleBlockSeat(sec.id, seatId)} />
+                onToggleBlockSeat={(seatId) => toggleBlockSeat(sec.id, seatId)}
+                onToggleRemoveSeat={(seatId) => toggleRemoveSeat(sec.id, seatId)}
+                selectedRowIdx={sec.id === selectedId ? selectedRowIdx : null}
+                selectedRowIdxs={sec.id === selectedId ? selectedRowIdxs : []}
+                onSelectRow={(rowIdx) => toggleSelectedRowIdx(rowIdx)}
+                rowSelectMode={rowSelectMode}
+                blockRowMode={blockRowMode}
+                onToggleBlockRow={(rowSeatIds) => toggleBlockRow(sec.id, rowSeatIds)} />
         )}
 
         <FieldShape

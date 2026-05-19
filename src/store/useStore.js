@@ -49,6 +49,10 @@ export const useStore = create(persist((set, get) => ({
   tool: 'select',
   selectedId: null,
   selectedIds: [],
+  selectedRowIdx: null,
+  selectedRowIdxs: [],
+  rowSelectMode: false,
+  blockRowMode: false,
   fieldSelected: false,
   drawingState: null,
 
@@ -83,18 +87,56 @@ export const useStore = create(persist((set, get) => ({
   },
 
   // ── tool / selection ──────────────────────────────────────────────────────
-  setTool:       (tool)  => set({ tool, selectedId: null, selectedIds: [], fieldSelected: false, drawingState: null }),
-  selectSection: (id)    => set({ selectedId: id, selectedIds: [], fieldSelected: false }),
+  setTool:       (tool)  => set({ tool, selectedId: null, selectedIds: [], selectedRowIdx: null, selectedRowIdxs: [], rowSelectMode: false, blockRowMode: false, fieldSelected: false, drawingState: null }),
+  selectSection: (id)    => set(s => ({ selectedId: id, selectedIds: [], selectedRowIdx: null, selectedRowIdxs: [], rowSelectMode: s.selectedId === id ? s.rowSelectMode : false, blockRowMode: s.selectedId === id ? s.blockRowMode : false, fieldSelected: false })),
   toggleSelectSection: (id) => set(s => {
     const ids = s.selectedIds.includes(id) ? s.selectedIds.filter(i => i !== id) : [...s.selectedIds, id]
     return { selectedIds: ids, selectedId: null, fieldSelected: false }
   }),
-  clearSelection: () => set({ selectedId: null, selectedIds: [] }),
-  selectField:   (v)     => set({ fieldSelected: v, selectedId: null, selectedIds: [] }),
+  clearSelection: () => set({ selectedId: null, selectedIds: [], selectedRowIdx: null, selectedRowIdxs: [], rowSelectMode: false, blockRowMode: false }),
+  selectField:   (v)     => set({ fieldSelected: v, selectedId: null, selectedIds: [], selectedRowIdx: null, selectedRowIdxs: [], rowSelectMode: false, blockRowMode: false }),
   setDrawingState: (ds)  => set({ drawingState: ds }),
-  clearSections: ()      => set({ sections: [], selectedId: null, selectedIds: [], past: [], future: [] }),
+  clearSections: ()      => set({ sections: [], selectedId: null, selectedIds: [], selectedRowIdx: null, selectedRowIdxs: [], rowSelectMode: false, blockRowMode: false, past: [], future: [] }),
+  setSelectedRowIdx: (i) => set({ selectedRowIdx: i }),
+  toggleSelectedRowIdx: (i) => set(s => {
+    const has = s.selectedRowIdxs.includes(i)
+    return { selectedRowIdxs: has ? s.selectedRowIdxs.filter(x => x !== i) : [...s.selectedRowIdxs, i], selectedRowIdx: i }
+  }),
+  setRowSelectMode: (v)  => set({ rowSelectMode: v, selectedRowIdx: null, selectedRowIdxs: [] }),
+  setBlockRowMode:  (v)  => set({ blockRowMode: v }),
 
   // ── sections (all mutating ops push history first) ────────────────────────
+  addRow: (row) => {
+    get()._pushHistory()
+    set((s) => ({
+      sections: [...s.sections, { id: nanoid(), type: 'row', seats: 8, seatSpacing: 28, curve: 0, rotation: 0, label: `R${s.sections.filter(x => x.type === 'row').length + 1}`, color: '#60a5fa', categoryId: 'general', blockedSeats: [], ...row }],
+    }))
+  },
+
+  addTable: (overrides) => {
+    get()._pushHistory()
+    set((s) => {
+      const tableNum = s.sections.filter(x => x.type === 'table').length + 1
+      return {
+        sections: [...s.sections, {
+          id: nanoid(), type: 'table',
+          label: `T${tableNum}`,
+          tableShape: 'round',
+          chairs: 8, openSpaces: 0,
+          tableW: 80, tableH: 60,
+          autoRadius: true,
+          rotation: 0,
+          labelVisible: true,
+          bookBySeat: false,
+          color: '#7c3aed',
+          categoryId: 'general',
+          blockedSeats: [],
+          ...overrides,
+        }],
+      }
+    })
+  },
+
   addSection: (section) => {
     get()._pushHistory()
     const defaultRowGroups = [{ rows: 5, seatsPerRow: Math.ceil((section.totalSeats || 50) / 5) }]
@@ -140,6 +182,32 @@ export const useStore = create(persist((set, get) => ({
     }))
   },
 
+  toggleBlockRow: (secId, rowSeatIds) => {
+    set(s => ({
+      sections: s.sections.map(sec => {
+        if (sec.id !== secId) return sec
+        const blocked = sec.blockedSeats || []
+        const allBlocked = rowSeatIds.every(id => blocked.includes(id))
+        return {
+          ...sec,
+          blockedSeats: allBlocked
+            ? blocked.filter(id => !rowSeatIds.includes(id))
+            : [...new Set([...blocked, ...rowSeatIds])]
+        }
+      })
+    }))
+  },
+
+  toggleRemoveSeat: (secId, seatId) => {
+    set(s => ({
+      sections: s.sections.map(sec => {
+        if (sec.id !== secId) return sec
+        const removed = sec.removedSeats || []
+        return { ...sec, removedSeats: removed.includes(seatId) ? removed.filter(id => id !== seatId) : [...removed, seatId] }
+      })
+    }))
+  },
+
   reorderSection: (id, dir) => {
     // dir: 1 = move up (higher z), -1 = move down
     get()._pushHistory()
@@ -167,27 +235,29 @@ export const useStore = create(persist((set, get) => ({
 
   // ── undo / redo ───────────────────────────────────────────────────────────
   undo: () => {
-    const { past, sections, future } = get()
+    const { past, sections, future, selectedId } = get()
     if (!past.length) return
     const prev = past[past.length - 1]
+    const stillExists = prev.some(s => s.id === selectedId)
     set({
       past: past.slice(0, -1),
       sections: prev,
       future: [snapshot(sections), ...future],
-      selectedId: null,
+      selectedId: stillExists ? selectedId : null,
       selectedIds: [],
     })
   },
 
   redo: () => {
-    const { past, sections, future } = get()
+    const { past, sections, future, selectedId } = get()
     if (!future.length) return
     const next = future[0]
+    const stillExists = next.some(s => s.id === selectedId)
     set({
       future: future.slice(1),
       sections: next,
       past: [...past, snapshot(sections)],
-      selectedId: null,
+      selectedId: stillExists ? selectedId : null,
       selectedIds: [],
     })
   },
