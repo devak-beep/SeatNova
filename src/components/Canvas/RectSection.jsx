@@ -25,6 +25,7 @@ export default function RectSection({
   const { seats, seatR } = useMemo(() => generateRectSeats(section),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [x, y, w, h, section.seatSize, section.seatRowGap, section.seatColGap,
+     section.blockRowGap, section.blockColGap,
      JSON.stringify(section.rowGroups), JSON.stringify(section.colGroups),
      JSON.stringify(section.gridLayout), JSON.stringify(section.removedSeats),
      JSON.stringify(section.rowCurves)])
