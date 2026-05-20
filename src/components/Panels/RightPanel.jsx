@@ -554,6 +554,28 @@ export default function RightPanel() {
             </select>
           </Field>
         </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+          <Field label="Rows" t={t}>
+            <input style={inp} type="number" min={1} max={500}
+              value={rowGroups.reduce((s, g) => s + (g.rows || 1), 0)}
+              onChange={e => {
+                const rows = Math.max(1, Math.min(500, +e.target.value) || 1)
+                const seatsPerRow = Math.max(...rowGroups.map(g => g.seatsPerRow || 1))
+                update('rowGroups', [{ ...rowGroups[0], rows, seatsPerRow }])
+                if (sec.gridLayout) updateSection(sec.id, { gridLayout: { ...sec.gridLayout, totalRows: rows } })
+              }} />
+          </Field>
+          <Field label="Columns" t={t}>
+            <input style={inp} type="number" min={1} max={500}
+              value={Math.max(...rowGroups.map(g => g.seatsPerRow || 1))}
+              onChange={e => {
+                const seatsPerRow = Math.max(1, Math.min(500, +e.target.value) || 1)
+                const rows = rowGroups.reduce((s, g) => s + (g.rows || 1), 0)
+                update('rowGroups', [{ ...rowGroups[0], rows, seatsPerRow }])
+                if (sec.gridLayout) updateSection(sec.id, { gridLayout: { ...sec.gridLayout, totalCols: seatsPerRow } })
+              }} />
+          </Field>
+        </div>
       </SectionBlock>
 
       <SectionBlock title="Seat Layout" t={t}>
@@ -654,9 +676,6 @@ export default function RightPanel() {
                   style={{ width: '100%', background: t.inputBg, border: `1px solid ${t.inputBorder}`, borderRadius: 4, color: t.inputColor, padding: '4px 6px', fontSize: 11, boxSizing: 'border-box' }} />
               </div>
             </div>
-          <GridBlockEditor section={sec} onUpdate={(updates) => {
-            updateSection(sec.id, updates)
-          }} />
           </>
         ) : (
           (sec.showSeats ?? true) ? (
@@ -719,6 +738,9 @@ export default function RightPanel() {
         )}
       </SectionBlock>
 
+      {sec.type === 'rect' && (
+        <GridBlockEditor section={sec} onUpdate={(updates) => updateSection(sec.id, updates)} />
+      )}
 
       {sec.type === 'arc' && (
         <SectionBlock title="Arc Geometry" t={t}>
@@ -738,6 +760,53 @@ export default function RightPanel() {
             <Field label="Y" t={t}><input style={inp} type="number" value={Math.round(sec.y)} onChange={e => update('y', Number(e.target.value))} /></Field>
             <Field label="Width" t={t}><input style={inp} type="number" value={Math.round(sec.w)} onChange={e => update('w', Number(e.target.value))} /></Field>
             <Field label="Height" t={t}><input style={inp} type="number" value={Math.round(sec.h)} onChange={e => update('h', Number(e.target.value))} /></Field>
+          </div>
+        </SectionBlock>
+      )}
+
+      {sec.type === 'rect' && (
+        <SectionBlock title="Section Spacing" t={t}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+            <div>
+              <label style={{ fontSize: 10, color: t.labelColor, display: 'block', marginBottom: 4, fontWeight: 600 }}>H Gap (sections)</label>
+              <input type="number" step="1" min="0" value={sec._hGap ?? 0} onChange={(e) => {
+                const gap = Math.max(0, Number(e.target.value) || 0)
+                updateSection(sec.id, { _hGap: gap })
+                const rectSecs = sections.filter(s => s.type === 'rect')
+                if (rectSecs.length < 2) return
+                const sorted = [...rectSecs].sort((a, b) => a.x - b.x)
+                let cursor = sorted[0].x
+                sorted.forEach(s => { updateSection(s.id, { x: cursor }); cursor += s.w + gap })
+              }} style={{ width: '100%', background: t.inputBg, border: `1px solid ${t.inputBorder}`, borderRadius: 4, color: t.inputColor, padding: '5px 8px', fontSize: 12, boxSizing: 'border-box' }} />
+            </div>
+            <div>
+              <label style={{ fontSize: 10, color: t.labelColor, display: 'block', marginBottom: 4, fontWeight: 600 }}>V Gap (sections)</label>
+              <input type="number" step="1" min="0" value={sec._vGap ?? 0} onChange={(e) => {
+                const gap = Math.max(0, Number(e.target.value) || 0)
+                updateSection(sec.id, { _vGap: gap })
+                const rectSecs = sections.filter(s => s.type === 'rect')
+                if (rectSecs.length < 2) return
+                const sorted = [...rectSecs].sort((a, b) => a.y - b.y)
+                let cursor = sorted[0].y
+                sorted.forEach(s => { updateSection(s.id, { y: cursor }); cursor += s.h + gap })
+              }} style={{ width: '100%', background: t.inputBg, border: `1px solid ${t.inputBorder}`, borderRadius: 4, color: t.inputColor, padding: '5px 8px', fontSize: 12, boxSizing: 'border-box' }} />
+            </div>
+            <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+              <button onClick={() => {
+                const rectSecs = sections.filter(s => s.type === 'rect')
+                if (rectSecs.length < 2) return
+                const hGap = sec._hGap ?? 0
+                const vGap = sec._vGap ?? 0
+                const sorted = [...rectSecs].sort((a, b) => a.x !== b.x ? a.x - b.x : a.y - b.y)
+                let cursor = sorted[0].x
+                sorted.forEach(s => { updateSection(s.id, { x: cursor }); cursor += s.w + hGap })
+                const sortedV = [...rectSecs].sort((a, b) => a.y - b.y)
+                let cursorV = sortedV[0].y
+                sortedV.forEach(s => { updateSection(s.id, { y: cursorV }); cursorV += s.h + vGap })
+              }} style={{ width: '100%', padding: '5px 4px', fontSize: 11, background: t.inputBg, border: `1px solid ${t.inputBorder}`, color: t.inputColor, borderRadius: 4, cursor: 'pointer' }}>
+                ↔ Redistribute
+              </button>
+            </div>
           </div>
         </SectionBlock>
       )}

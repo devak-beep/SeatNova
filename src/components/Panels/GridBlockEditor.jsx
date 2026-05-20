@@ -10,8 +10,9 @@ const CATEGORIES = [
 ]
 
 export default function GridBlockEditor({ section, onUpdate }) {
-  const { sections, updateSection, commitUpdate } = useStore()
+  const { commitUpdate } = useStore()
   const t = useContext(ThemeContext)
+  const enabled = section.gridDivisionEnabled ?? false
 
   const gridLayout = section.gridLayout || {
     totalRows: section.rowGroups?.reduce((sum, g) => sum + (g.rows || 1), 0) || 8,
@@ -95,12 +96,10 @@ export default function GridBlockEditor({ section, onUpdate }) {
 
   const handleUpdateGridSize = (rows, cols) => {
     commitUpdate()
+    const existingGroup = section.rowGroups?.[0] || {}
     onUpdate({
-      gridLayout: {
-        ...gridLayout,
-        totalRows: rows,
-        totalCols: cols,
-      },
+      gridLayout: { ...gridLayout, totalRows: rows, totalCols: cols },
+      rowGroups: [{ ...existingGroup, rows, seatsPerRow: cols }],
     })
   }
 
@@ -137,22 +136,17 @@ export default function GridBlockEditor({ section, onUpdate }) {
 
   return (
     <div style={{ marginBottom: 16 }}>
-      <div
-        style={{
-          fontSize: 10,
-          fontWeight: 700,
-          color: t.labelColor,
-          textTransform: 'uppercase',
-          letterSpacing: '0.1em',
-          marginBottom: 12,
-          paddingBottom: 8,
-          borderBottom: `1px solid ${t.panelBorder}`,
-        }}
-      >
-        Seat Division (Visual Editor)
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: enabled ? 12 : 0, paddingBottom: 8, borderBottom: `1px solid ${t.panelBorder}` }}>
+        <span style={{ fontSize: 10, fontWeight: 700, color: t.labelColor, textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+          Seat Division (Visual Editor)
+        </span>
+        <button onClick={() => onUpdate({ gridDivisionEnabled: !enabled, ...(!enabled ? { showSeats: true } : {}) })}
+          style={{ width: 36, height: 20, borderRadius: 10, border: 'none', cursor: 'pointer', position: 'relative', background: enabled ? t.accent : t.inputBorder, transition: 'background 0.2s', flexShrink: 0 }}>
+          <span style={{ position: 'absolute', top: 2, left: enabled ? 18 : 2, width: 16, height: 16, borderRadius: '50%', background: '#fff', transition: 'left 0.2s' }} />
+        </button>
       </div>
 
-      <div
+      {enabled && <><div
         style={{
           fontSize: 9,
           color: t.labelColor,
@@ -179,58 +173,6 @@ export default function GridBlockEditor({ section, onUpdate }) {
           <input type="number" step="1" min="0" max="500" value={section.blockColGap ?? 0}
             onChange={(e) => onUpdate({ blockColGap: Math.max(0, Number(e.target.value) || 0) })}
             style={{ width: '100%', background: t.inputBg, border: `1px solid ${t.inputBorder}`, borderRadius: 4, color: t.inputColor, padding: '5px 8px', fontSize: 12 }} />
-        </div>
-      </div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 12 }}>
-        <div>
-          <label style={{ fontSize: 10, color: t.labelColor, display: 'block', marginBottom: 4, fontWeight: 600 }}>H Gap (sections)</label>
-          <input type="number" step="1" min="0" value={section._hGap ?? 0} onChange={(e) => {
-            const gap = Math.max(0, Number(e.target.value) || 0)
-            onUpdate({ _hGap: gap })
-            const rectSecs = sections.filter(s => s.type === 'rect')
-            if (rectSecs.length < 2) return
-            const sorted = [...rectSecs].sort((a, b) => a.x - b.x)
-            let cursor = sorted[0].x
-            sorted.forEach((s, i) => {
-              updateSection(s.id, { x: cursor })
-              cursor += s.w + gap
-            })
-            commitUpdate()
-          }} style={{ width: '100%', background: t.inputBg, border: `1px solid ${t.inputBorder}`, borderRadius: 4, color: t.inputColor, padding: '5px 8px', fontSize: 12 }} />
-        </div>
-        <div>
-          <label style={{ fontSize: 10, color: t.labelColor, display: 'block', marginBottom: 4, fontWeight: 600 }}>V Gap (sections)</label>
-          <input type="number" step="1" min="0" value={section._vGap ?? 0} onChange={(e) => {
-            const gap = Math.max(0, Number(e.target.value) || 0)
-            onUpdate({ _vGap: gap })
-            const rectSecs = sections.filter(s => s.type === 'rect')
-            if (rectSecs.length < 2) return
-            const sorted = [...rectSecs].sort((a, b) => a.y - b.y)
-            let cursor = sorted[0].y
-            sorted.forEach((s) => {
-              updateSection(s.id, { y: cursor })
-              cursor += s.h + gap
-            })
-            commitUpdate()
-          }} style={{ width: '100%', background: t.inputBg, border: `1px solid ${t.inputBorder}`, borderRadius: 4, color: t.inputColor, padding: '5px 8px', fontSize: 12 }} />
-        </div>
-        <div style={{ display: 'flex', alignItems: 'flex-end' }}>
-          <button onClick={() => {
-            const rectSecs = sections.filter(s => s.type === 'rect')
-            if (rectSecs.length < 2) return
-            const hGap = section._hGap ?? 0
-            const vGap = section._vGap ?? 0
-            const sorted = [...rectSecs].sort((a, b) => a.x !== b.x ? a.x - b.x : a.y - b.y)
-            let cursor = sorted[0].x
-            sorted.forEach(s => { updateSection(s.id, { x: cursor }); cursor += s.w + hGap })
-            const sortedV = [...rectSecs].sort((a, b) => a.y - b.y)
-            let cursorV = sortedV[0].y
-            sortedV.forEach(s => { updateSection(s.id, { y: cursorV }); cursorV += s.h + vGap })
-            commitUpdate()
-          }} style={{ width: '100%', padding: '5px 4px', fontSize: 11, background: t.inputBg, border: `1px solid ${t.inputBorder}`, color: t.inputColor, borderRadius: 4, cursor: 'pointer' }}>
-            ↔ Redistribute
-          </button>
         </div>
       </div>
 
@@ -653,6 +595,7 @@ export default function GridBlockEditor({ section, onUpdate }) {
           </button>
         </div>
       )}
+    </>}
     </div>
   )
 }
