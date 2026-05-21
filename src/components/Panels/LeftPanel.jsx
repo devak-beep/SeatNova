@@ -2,7 +2,7 @@ import React, { useRef, useState, useContext } from 'react'
 import { useStore } from '../../store/useStore'
 import { ThemeContext } from '../../EditorApp'
 
-const FIELD_TYPES = ['cricket', 'football', 'basketball', 'stage']
+const FIELD_TYPES = ['none', 'cricket', 'football', 'basketball', 'stage']
 const VENUE_SHAPES = ['circular', 'rectangular']
 
 const SECTION_ICONS = { arc: '◔', rect: '▭', poly: '✦', row: '⋯', table: '⬡' }
@@ -85,11 +85,14 @@ export default function LeftPanel() {
     deleteSection, canvasSize, setCanvasSize, toggleLock, clearSections,
     floorPlanImage, setFloorPlan, floorPlanOpacity, setFloorPlanOpacity,
     floorPlanLocked, toggleFloorPlanLock, stageLocked, toggleStageLock,
+    categories, addCategory, updateCategory, deleteCategory,
   } = useStore()
   const t = useContext(ThemeContext)
   const dragId = useRef(null)
   const [overIdx, setOverIdx] = useState(null)
   const [pendingSize, setPendingSize] = useState(null)
+  const [newCatName, setNewCatName] = useState('')
+  const [newCatColor, setNewCatColor] = useState('#a855f7')
   const reversed = [...sections].reverse()
   const sizeLocked = sections.length > 0
 
@@ -126,7 +129,7 @@ export default function LeftPanel() {
         </FieldRow>
         <FieldRow label="Field / Stage" t={t}>
           <select style={inp} value={fieldType} onChange={e => setFieldType(e.target.value)}>
-            {FIELD_TYPES.map(f => <option key={f} value={f}>{f.charAt(0).toUpperCase() + f.slice(1)}</option>)}
+            {FIELD_TYPES.map(f => <option key={f} value={f}>{f === 'none' ? '— None —' : f.charAt(0).toUpperCase() + f.slice(1)}</option>)}
           </select>
         </FieldRow>
         {fieldType === 'stage' && (
@@ -182,6 +185,37 @@ export default function LeftPanel() {
             </button>
           </div>
         )}
+      </PanelSection>
+
+      {/* Categories */}
+      <PanelSection title="Categories" t={t}>
+        {categories.map(c => (
+          <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 5 }}>
+            <input type="color" value={c.color} onChange={e => updateCategory(c.id, { color: e.target.value })}
+              style={{ width: 22, height: 22, border: 'none', background: 'none', cursor: 'pointer', flexShrink: 0, padding: 0 }} />
+            <input style={{ ...inp, flex: 1, padding: '3px 6px', fontSize: 11 }} value={c.label}
+              onChange={e => updateCategory(c.id, { label: e.target.value })} />
+            <button onClick={() => deleteCategory(c.id)}
+              style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: 12, padding: '0 2px', flexShrink: 0 }}>✕</button>
+          </div>
+        ))}
+        <div style={{ display: 'flex', gap: 5, marginTop: 4 }}>
+          <input type="color" value={newCatColor} onChange={e => setNewCatColor(e.target.value)}
+            style={{ width: 28, height: 28, border: 'none', background: 'none', cursor: 'pointer', flexShrink: 0, padding: 0 }} />
+          <input style={{ ...inp, flex: 1, padding: '3px 6px', fontSize: 11 }} placeholder="New category name"
+            value={newCatName} onChange={e => setNewCatName(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && newCatName.trim()) {
+                addCategory({ label: newCatName.trim(), color: newCatColor })
+                setNewCatName('')
+              }
+            }} />
+          <button onClick={() => {
+            if (!newCatName.trim()) return
+            addCategory({ label: newCatName.trim(), color: newCatColor })
+            setNewCatName('')
+          }} style={{ padding: '3px 8px', borderRadius: 6, border: `1px solid ${t.inputBorder}`, background: t.inputBg, color: t.inputColor, fontSize: 13, cursor: 'pointer', flexShrink: 0 }}>+</button>
+        </div>
       </PanelSection>
 
       {/* Layers */}

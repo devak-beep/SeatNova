@@ -1,8 +1,9 @@
 import React, { useMemo } from 'react'
+import { useStore } from '../../store/useStore'
 
 function generateChairs(sec) {
   const { tableShape = 'round', chairs = 8, openSpaces = 0, x, y, tableW = 100, tableH = 60, autoRadius = true } = sec
-  const chairR = Math.max(6, Math.min(tableW, tableH) * 0.12)
+  const chairR = sec.chairSize ?? Math.max(6, Math.min(tableW, tableH) * 0.12)
   const gap = chairR * 0.6
   const positions = []
 
@@ -13,13 +14,18 @@ function generateChairs(sec) {
       ? Math.max(tableW / 2, (total * (chairR * 2 + gap)) / (2 * Math.PI))
       : tableW / 2
     const orbitR = tableRadius + chairR + gap
+    const openSet = new Set(sec.openSpaceIndices || [])
+    // If openSpaceIndices not set, fall back to last `openSpaces` positions
+    const useCustom = sec.openSpaceIndices != null
     for (let i = 0; i < total; i++) {
       const angle = (i / total) * 2 * Math.PI - Math.PI / 2
+      const isOpen = useCustom ? openSet.has(i) : i >= chairs
       positions.push({
         cx: x + Math.cos(angle) * orbitR,
         cy: y + Math.sin(angle) * orbitR,
-        isOpen: i >= chairs,
-        id: i < chairs ? `${sec.label}-Chair${i + 1}` : null,
+        isOpen,
+        id: isOpen ? null : `${sec.label}-Chair${i + 1}`,
+        idx: i,
       })
     }
   } else {
@@ -53,7 +59,9 @@ function generateChairs(sec) {
   return positions
 }
 
-export default function TableSection({ section, selected, onPointerDown, onContextMenu, onToggleBlockSeat }) {
+export default function TableSection({ section, selected, onPointerDown, onContextMenu, onToggleBlockSeat, onToggleOpenSpace }) {
+  const theme = useStore(s => s.theme)
+  const isDark = theme === 'dark'
   const {
     x, y, tableW = 100, tableH = 60, tableShape = 'round',
     chairs = 8, openSpaces = 0, autoRadius = true,
@@ -64,11 +72,12 @@ export default function TableSection({ section, selected, onPointerDown, onConte
   const chairPositions = useMemo(
     () => generateChairs(section),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [x, y, tableW, tableH, tableShape, chairs, openSpaces, autoRadius, section.label,
-     section.seatsTop, section.seatsBottom, section.seatsLeft, section.seatsRight]
+    [x, y, tableW, tableH, tableShape, chairs, openSpaces, autoRadius, section.label, section.chairSize,
+     section.seatsTop, section.seatsBottom, section.seatsLeft, section.seatsRight,
+     JSON.stringify(section.openSpaceIndices)]
   )
 
-  const chairR = Math.max(6, Math.min(tableW, tableH) * 0.12)
+  const chairR = section.chairSize ?? Math.max(6, Math.min(tableW, tableH) * 0.12)
 
   const allX = chairPositions.map(p => p.cx)
   const allY = chairPositions.map(p => p.cy)
@@ -97,13 +106,49 @@ export default function TableSection({ section, selected, onPointerDown, onConte
       )}
 
       {tableShape === 'round' ? (
-        <circle cx={x} cy={y} r={tableRadius}
-          fill={color} fillOpacity={selected ? 0.85 : 0.65}
-          stroke={selected ? '#fff' : 'rgba(0,0,0,0.25)'} strokeWidth={selected ? 2 : 1} />
+        <>
+          <circle cx={x} cy={y} r={tableRadius}
+            fill={color} fillOpacity={selected ? 0.85 : 0.65}
+            stroke={selected ? '#fff' : 'rgba(0,0,0,0.25)'} strokeWidth={selected ? 2 : 1} />
+          {selected && [
+            { id: 'n', cx: x,              cy: y - tableRadius, cursor: 'n-resize' },
+            { id: 'e', cx: x + tableRadius, cy: y,              cursor: 'e-resize' },
+            { id: 's', cx: x,              cy: y + tableRadius, cursor: 's-resize' },
+            { id: 'w', cx: x - tableRadius, cy: y,              cursor: 'w-resize' },
+          ].map(h => (
+            <rect key={h.id}
+              x={h.cx - 5} y={h.cy - 5} width={10} height={10} rx={2}
+              fill="#fff" stroke="#7c3aed" strokeWidth={1.5}
+              data-handle="1"
+              style={{ cursor: h.cursor }}
+              onPointerDown={e => { e.stopPropagation(); onPointerDown(e, 'resize', h.id) }}
+            />
+          ))}
+        </>
       ) : (
-        <rect x={x - tableW / 2} y={y - tableH / 2} width={tableW} height={tableH}
-          fill={color} fillOpacity={selected ? 0.85 : 0.65}
-          stroke={selected ? '#fff' : 'rgba(0,0,0,0.25)'} strokeWidth={selected ? 2 : 1} rx={8} />
+        <>
+          <rect x={x - tableW / 2} y={y - tableH / 2} width={tableW} height={tableH}
+            fill={color} fillOpacity={selected ? 0.85 : 0.65}
+            stroke={selected ? '#fff' : 'rgba(0,0,0,0.25)'} strokeWidth={selected ? 2 : 1} rx={8} />
+          {selected && [
+            { id: 'nw', cx: x - tableW/2, cy: y - tableH/2, cursor: 'nw-resize' },
+            { id: 'n',  cx: x,            cy: y - tableH/2, cursor: 'n-resize'  },
+            { id: 'ne', cx: x + tableW/2, cy: y - tableH/2, cursor: 'ne-resize' },
+            { id: 'e',  cx: x + tableW/2, cy: y,            cursor: 'e-resize'  },
+            { id: 'se', cx: x + tableW/2, cy: y + tableH/2, cursor: 'se-resize' },
+            { id: 's',  cx: x,            cy: y + tableH/2, cursor: 's-resize'  },
+            { id: 'sw', cx: x - tableW/2, cy: y + tableH/2, cursor: 'sw-resize' },
+            { id: 'w',  cx: x - tableW/2, cy: y,            cursor: 'w-resize'  },
+          ].map(h => (
+            <rect key={h.id}
+              x={h.cx - 5} y={h.cy - 5} width={10} height={10} rx={2}
+              fill="#fff" stroke="#7c3aed" strokeWidth={1.5}
+              data-handle="1"
+              style={{ cursor: h.cursor }}
+              onPointerDown={e => { e.stopPropagation(); onPointerDown(e, 'resize', h.id) }}
+            />
+          ))}
+        </>
       )}
 
       {labelVisible && (
@@ -117,16 +162,33 @@ export default function TableSection({ section, selected, onPointerDown, onConte
         const blocked = blockedSeats.includes(p.id)
         const isOpen = p.isOpen
         const isClickable = bookBySeat && !isOpen && p.id
+        const isRound = tableShape === 'round'
+        const canToggle = selected && isRound && onToggleOpenSpace
         return (
-          <circle key={i} cx={p.cx} cy={p.cy} r={chairR}
-            fill={isOpen ? 'transparent' : blocked ? '#ef4444' : '#f8fafc'}
-            fillOpacity={isOpen ? 0 : 0.9}
-            stroke={isOpen ? 'rgba(255,255,255,0.2)' : blocked ? '#b91c1c' : color}
-            strokeWidth={isOpen ? 1 : 1.5}
-            strokeDasharray={isOpen ? '3 2' : undefined}
-            style={{ cursor: isClickable ? 'pointer' : 'move' }}
-            onPointerDown={isClickable ? e => { e.stopPropagation(); onToggleBlockSeat?.(p.id) } : undefined}
-          />
+          <g key={i}>
+            <circle cx={p.cx} cy={p.cy} r={chairR}
+              fill={isOpen ? (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)') : blocked ? '#ef4444' : '#f8fafc'}
+              fillOpacity={isOpen ? 1 : 0.9}
+              stroke={isOpen ? (isDark ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.35)') : blocked ? '#b91c1c' : color}
+              strokeWidth={isOpen ? 1.2 : 1.5}
+              strokeDasharray={isOpen ? '3 2' : undefined}
+              style={{ cursor: canToggle ? 'pointer' : isClickable ? 'pointer' : 'move' }}
+              onPointerDown={e => {
+                if (canToggle && e.shiftKey) {
+                  e.stopPropagation()
+                  onToggleOpenSpace(p.idx ?? i)
+                  return
+                }
+                if (isClickable) { e.stopPropagation(); onToggleBlockSeat?.(p.id) }
+              }}
+              onContextMenu={canToggle ? e => { e.stopPropagation(); e.preventDefault(); onToggleOpenSpace(p.idx ?? i) } : undefined}
+            />
+            {isOpen && (
+              <text x={p.cx} y={p.cy} textAnchor="middle" dominantBaseline="middle"
+                fontSize={chairR * 0.75} fill={isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.35)'} fontWeight="600"
+                style={{ pointerEvents: 'none', userSelect: 'none' }}>○</text>
+            )}
+          </g>
         )
       })}
 
@@ -139,6 +201,19 @@ export default function TableSection({ section, selected, onPointerDown, onConte
             style={{ pointerEvents: 'none', userSelect: 'none' }}>{i + 1}</text>
         )
       })}
+      {selected && (() => {
+        const hs = 7
+        const topY = by - hs * 3
+        return <>
+          <line x1={x} y1={by} x2={x} y2={topY + hs} stroke="#fff" strokeWidth={1} strokeDasharray={`${hs} ${hs * 0.5}`} style={{ pointerEvents: 'none' }} />
+          <circle cx={x} cy={topY} r={hs}
+            fill="#7c3aed" stroke="#fff" strokeWidth={1.5}
+            data-handle="1"
+            style={{ cursor: 'grab' }}
+            onPointerDown={e => { e.stopPropagation(); onPointerDown(e, 'rotate', null) }}
+          />
+        </>
+      })()}
     </g>
   )
 }

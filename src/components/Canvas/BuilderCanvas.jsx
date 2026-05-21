@@ -165,7 +165,7 @@ function SmartGuides({ guides, CS }) {
     <g style={{ pointerEvents: 'none' }}>
       {guides.lines.map((l, i) => (
         <line key={i} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2}
-          stroke="#f43f5e" strokeWidth={CS * 0.0012} strokeDasharray={`${CS*0.004} ${CS*0.002}`} />
+          stroke={l.center ? '#a855f7' : '#f43f5e'} strokeWidth={CS * 0.0012} strokeDasharray={`${CS*0.004} ${CS*0.002}`} />
       ))}
       {guides.gaps.map((g, i) => (
         <g key={i}>
@@ -299,8 +299,14 @@ export default function BuilderCanvas() {
     didInteractRef.current = true
     commitUpdate()
     selectSection(secId)
-    // handle is rowIdx for rect row-curve mode
-    interactRef.current = { mode, handle, id: secId, startPt: pt(e), origSec: { ...sec } }
+    // For round table resize: sync tableW to actual rendered radius so drag starts correctly
+    let origSec = { ...sec }
+    if (mode === 'resize' && sec.tableShape === 'round' && sec.autoRadius !== false) {
+      const chairR = sec.chairSize ?? Math.max(6, Math.min(sec.tableW ?? 100, sec.tableH ?? 60) * 0.12)
+      const autoR = Math.max((sec.tableW ?? 100) / 2, ((sec.chairs ?? 8) + (sec.openSpaces ?? 0)) * (chairR * 2 + chairR * 0.6) / (2 * Math.PI))
+      origSec = { ...sec, tableW: Math.round(autoR * 2) }
+    }
+    interactRef.current = { mode, handle, id: secId, startPt: pt(e), origSec }
     svgRef.current.setPointerCapture(e.pointerId)
   }, [tool, sections, selectSection, toggleSelectSection, commitUpdate])
   // ── Pointer move ──────────────────────────────────────────────────────────
@@ -385,12 +391,19 @@ export default function BuilderCanvas() {
       // Smart guides for rect sections
       if (o.w != null) {
         const others = sections.filter(s => s.id !== ia.id && s.type === 'rect')
+        // Add canvas center as a virtual 1×1 object so center-alignment snaps work
+        const centerObj = { x: CX_ - 0.5, y: CY_ - 0.5, w: 1, h: 1 }
         const snapPx = SNAP_THRESHOLD * (viewRef.current.w / CS)
-        const g = computeGuides({ x: nx, y: ny, w: o.w, h: o.h }, others, snapPx * (CS / viewRef.current.w) * 8)
+        const g = computeGuides({ x: nx, y: ny, w: o.w, h: o.h }, [...others, centerObj], snapPx * (CS / viewRef.current.w) * 8)
         if (g.snapX !== null) nx += g.snapX
         if (g.snapY !== null) ny += g.snapY
         // Recompute guides after snap for accurate line positions
-        const g2 = computeGuides({ x: nx, y: ny, w: o.w, h: o.h }, others, 1)
+        const g2 = computeGuides({ x: nx, y: ny, w: o.w, h: o.h }, [...others, centerObj], 1)
+        // Mark center guide lines with a special color
+        g2.lines.forEach(l => {
+          if (Math.abs(l.x1 - CX_) < 1 || Math.abs(l.x2 - CX_) < 1) l.center = true
+          if (Math.abs(l.y1 - CY_) < 1 || Math.abs(l.y2 - CY_) < 1) l.center = true
+        })
         setGuides((g2.lines.length || g2.gaps.length) ? g2 : null)
       }
       updateSection(ia.id, { x: nx, y: ny })
@@ -401,7 +414,13 @@ export default function BuilderCanvas() {
       const startAngle = Math.atan2(ia.startPt.y - ocy, ia.startPt.x - ocx)
       const curAngle   = Math.atan2(p.y - ocy, p.x - ocx)
       const delta = (curAngle - startAngle) * (180 / Math.PI)
-      updateSection(ia.id, { rotation: ((o.rotation || 0) + delta + 360) % 360 })
+      let newRot = ((o.rotation || 0) + delta + 360) % 360
+      // Snap to nearest 90° if within 5°
+      const nearest90 = Math.round(newRot / 90) * 90
+      const snapped = Math.abs(newRot - nearest90) < 5
+      if (snapped) newRot = nearest90 % 360
+      setRotSnap(snapped ? { cx: ocx, cy: ocy } : null)
+      updateSection(ia.id, { rotation: newRot })
     } else if (ia.mode === 'arc-move') {
       const o = ia.origSec
       const origAngle = angleFromCenter(ia.startPt.x, ia.startPt.y, CX_, CY_)
@@ -428,13 +447,28 @@ export default function BuilderCanvas() {
       updateSection(ia.id, { endAngle: angleFromCenter(p.x, p.y, CX_, CY_) })
     } else if (ia.mode === 'resize') {
       const o = ia.origSec
-      let { x, y, w, h } = o
-      const MIN = 20, hid = ia.handle
-      if (hid.includes('e')) w = Math.max(MIN, o.w + dx)
-      if (hid.includes('s')) h = Math.max(MIN, o.h + dy)
-      if (hid.includes('w')) { x = o.x + dx; w = Math.max(MIN, o.w - dx) }
-      if (hid.includes('n')) { y = o.y + dy; h = Math.max(MIN, o.h - dy) }
-      updateSection(ia.id, { x, y, w, h })
+      // Round table: resize by dragging cardinal handles → update tableW (diameter)
+      if (o.tableShape === 'round') {
+        const dist = Math.sqrt((p.x - o.x) ** 2 + (p.y - o.y) ** 2)
+        updateSection(ia.id, { tableW: Math.max(20, Math.round(dist * 2)), autoRadius: false })
+      } else if (o.tableShape === 'rect') {
+        // Rect table: resize using tableW/tableH (centered on x,y)
+        const MIN = 20, hid = ia.handle
+        let w = o.tableW ?? 100, h = o.tableH ?? 60
+        if (hid.includes('e')) w = Math.max(MIN, (o.tableW ?? 100) + dx * 2)
+        if (hid.includes('w')) w = Math.max(MIN, (o.tableW ?? 100) - dx * 2)
+        if (hid.includes('s')) h = Math.max(MIN, (o.tableH ?? 60) + dy * 2)
+        if (hid.includes('n')) h = Math.max(MIN, (o.tableH ?? 60) - dy * 2)
+        updateSection(ia.id, { tableW: Math.round(w), tableH: Math.round(h) })
+      } else {
+        let { x, y, w, h } = o
+        const MIN = 20, hid = ia.handle
+        if (hid.includes('e')) w = Math.max(MIN, o.w + dx)
+        if (hid.includes('s')) h = Math.max(MIN, o.h + dy)
+        if (hid.includes('w')) { x = o.x + dx; w = Math.max(MIN, o.w - dx) }
+        if (hid.includes('n')) { y = o.y + dy; h = Math.max(MIN, o.h - dy) }
+        updateSection(ia.id, { x, y, w, h })
+      }
     } else if (ia.mode === 'row-spacing') {
       const o = ia.origSec
       // Unrotate dx into the row's local horizontal axis
@@ -469,6 +503,7 @@ export default function BuilderCanvas() {
     interactRef.current = null
     setGuides(null)
     setArcGuideData(null)
+    setRotSnap(null)
     if (tool === 'rect' && drawingState) {
       const { x1, y1, x2, y2 } = drawingState
       const w = Math.abs(x2 - x1), h = Math.abs(y2 - y1)
@@ -567,6 +602,8 @@ export default function BuilderCanvas() {
   const [guides, setGuides] = useState(null)
   const [arcGuideData, setArcGuideData] = useState(null)
   const [floorSelected, setFloorSelected] = useState(false)
+  const [showGrid, setShowGrid] = useState(false)
+  const [rotSnap, setRotSnap] = useState(null)  // { cx, cy } when snapped to 90°
   const floorSelectedRef = useRef(false)
   const setFloor = (v) => { floorSelectedRef.current = v; setFloorSelected(v) }
 
@@ -669,11 +706,11 @@ export default function BuilderCanvas() {
   })()
 
   return (
-    <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: t.canvasBg, overflow: 'hidden', position: 'relative' }}>
+    <div style={{ flex: 1, display: 'flex', alignItems: 'stretch', justifyContent: 'stretch', background: t.canvasBg, overflow: 'hidden', position: 'relative' }}>
       <svg
         ref={svgRef}
         viewBox={`${view.x} ${view.y} ${view.w} ${view.h}`}
-        style={{ width: 'min(80vh, 80vw)', height: 'min(80vh, 80vw)', cursor: panRef.current ? 'grabbing' : spaceRef.current ? 'grab' : cursor }}
+        style={{ width: '100%', height: '100%', cursor: panRef.current ? 'grabbing' : spaceRef.current ? 'grab' : cursor }}
         onClick={handleCanvasClick}
         onDoubleClick={handleCanvasDblClick}
         onContextMenu={(e) => handleContextMenu(e)}
@@ -685,6 +722,23 @@ export default function BuilderCanvas() {
         onMouseUp={handleMouseUp}
       >
         <rect x={0} y={0} width={CS} height={CS} fill={t.svgBg} data-bg="1" />
+        {showGrid && (() => {
+          const step = CS / 20
+          return (
+            <g style={{ pointerEvents: 'none' }}>
+              <defs>
+                <pattern id="grid-minor" width={step} height={step} patternUnits="userSpaceOnUse">
+                  <path d={`M ${step} 0 L 0 0 0 ${step}`} fill="none" stroke={t.inputColor} strokeWidth={CS * 0.0003} opacity={0.15} />
+                </pattern>
+                <pattern id="grid-major" width={step * 5} height={step * 5} patternUnits="userSpaceOnUse">
+                  <rect width={step * 5} height={step * 5} fill="url(#grid-minor)" />
+                  <path d={`M ${step*5} 0 L 0 0 0 ${step*5}`} fill="none" stroke={t.inputColor} strokeWidth={CS * 0.0006} opacity={0.3} />
+                </pattern>
+              </defs>
+              <rect x={0} y={0} width={CS} height={CS} fill="url(#grid-major)" />
+            </g>
+          )
+        })()}
         {venueShape === 'circular'
           ? <circle cx={CX_} cy={CY_} r={MAX_R_} fill={t.venueFill} data-bg="1" />
           : <rect x={CS*0.05} y={CS*0.05} width={CS*0.9} height={CS*0.9} rx={CS*0.018} fill={t.venueFill} data-bg="1" />
@@ -766,7 +820,15 @@ export default function BuilderCanvas() {
                 onPointerDown={(e, mode, handle) => { e.stopPropagation(); selectSection(sec.id); handleSectionPointerDown(e, mode, handle, sec.id) }}
                 onContextMenu={(e) => handleContextMenu(e, sec.id)}
                 onToggleBlockSeat={(seatId) => toggleBlockSeat(sec.id, seatId)}
-                onToggleRemoveSeat={(seatId) => toggleRemoveSeat(sec.id, seatId)} />
+                onToggleRemoveSeat={(seatId) => toggleRemoveSeat(sec.id, seatId)}
+                onToggleOpenSpace={(idx) => {
+                  const s = sections.find(s => s.id === sec.id)
+                  const total = (s.chairs ?? 8) + (s.openSpaces ?? 0)
+                  const current = s.openSpaceIndices ?? Array.from({ length: s.openSpaces ?? 0 }, (_, i) => (s.chairs ?? 8) + i)
+                  const next = current.includes(idx) ? current.filter(i => i !== idx) : [...current, idx]
+                  commitUpdate()
+                  updateSection(sec.id, { openSpaceIndices: next, openSpaces: next.length, chairs: total - next.length })
+                }} />
             : <RectSection key={sec.id} section={sec} selected={sec.id === selectedId} multiSelected={selectedIds.includes(sec.id)}
                 onPointerDown={(e, mode, handle) => handleSectionPointerDown(e, mode, handle, sec.id)}
                 onContextMenu={(e) => handleContextMenu(e, sec.id)}
@@ -798,6 +860,15 @@ export default function BuilderCanvas() {
         {arcGuides}
         <SmartGuides guides={guides} CS={CS} />
         {arcGuideData && <ArcGuideOverlay moving={arcGuideData.moving} others={arcGuideData.others} CX_={CX_} CY_={CY_} CS={CS} />}
+        {rotSnap && (
+          <g style={{ pointerEvents: 'none' }}>
+            <line x1={rotSnap.cx - CS * 0.15} y1={rotSnap.cy} x2={rotSnap.cx + CS * 0.15} y2={rotSnap.cy}
+              stroke="#a855f7" strokeWidth={CS * 0.0015} strokeDasharray={`${CS*0.005} ${CS*0.003}`} opacity={0.8} />
+            <line x1={rotSnap.cx} y1={rotSnap.cy - CS * 0.15} x2={rotSnap.cx} y2={rotSnap.cy + CS * 0.15}
+              stroke="#a855f7" strokeWidth={CS * 0.0015} strokeDasharray={`${CS*0.005} ${CS*0.003}`} opacity={0.8} />
+            <circle cx={rotSnap.cx} cy={rotSnap.cy} r={CS * 0.008} fill="none" stroke="#a855f7" strokeWidth={CS * 0.0015} opacity={0.8} />
+          </g>
+        )}
       </svg>
 
       {/* Zoom controls */}
@@ -806,10 +877,11 @@ export default function BuilderCanvas() {
           { label: '+', title: 'Zoom in', onClick: () => setView(v => { const f = 0.75; return { x: v.x + v.w*(1-f)/2, y: v.y + v.h*(1-f)/2, w: v.w*f, h: v.h*f } }) },
           { label: '⊙', title: 'Reset zoom', onClick: () => setView({ x: 0, y: 0, w: CS, h: CS }) },
           { label: '−', title: 'Zoom out', onClick: () => setView(v => { const f = 1/0.75; return { x: v.x + v.w*(1-f)/2, y: v.y + v.h*(1-f)/2, w: Math.min(v.w*f, CS/MIN_ZOOM), h: Math.min(v.h*f, CS/MIN_ZOOM) } }) },
+          { label: '⊞', title: 'Toggle grid', onClick: () => setShowGrid(g => !g), active: showGrid },
         ].map(b => (
           <button key={b.label} title={b.title} onClick={b.onClick} style={{
-            width: 32, height: 32, borderRadius: 6, border: `1px solid ${t.panelBorder}`,
-            background: t.panelBg, color: t.inputColor, fontSize: 16, cursor: 'pointer',
+            width: 32, height: 32, borderRadius: 6, border: `1px solid ${b.active ? '#a855f7' : t.panelBorder}`,
+            background: b.active ? 'rgba(168,85,247,0.15)' : t.panelBg, color: b.active ? '#a855f7' : t.inputColor, fontSize: 16, cursor: 'pointer',
             display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600,
           }}>{b.label}</button>
         ))}

@@ -419,9 +419,13 @@ export default function VenueRenderer({ venueData: _venueData }) {
                   ? Math.max((sec.tableW ?? 80) / 2, (total * (chairR * 2 + gap)) / (2 * Math.PI))
                   : (sec.tableW ?? 80) / 2
                 const orbitR = tableRadius + chairR + gap
+                const openSet = sec.openSpaceIndices != null
+                  ? new Set(sec.openSpaceIndices)
+                  : null
                 for (let i = 0; i < total; i++) {
                   const angle = (i / total) * 2 * Math.PI - Math.PI / 2
-                  chairPositions.push({ cx: sec.x + Math.cos(angle) * orbitR, cy: sec.y + Math.sin(angle) * orbitR, isOpen: i >= (sec.chairs ?? 8), id: `${sec.label}-Chair${i + 1}` })
+                  const isOpen = openSet ? openSet.has(i) : i >= (sec.chairs ?? 8)
+                  chairPositions.push({ cx: sec.x + Math.cos(angle) * orbitR, cy: sec.y + Math.sin(angle) * orbitR, isOpen, id: isOpen ? null : `${sec.label}-Chair${i + 1}` })
                 }
               } else {
                 const top = sec.seatsTop ?? 2, bottom = sec.seatsBottom ?? 2

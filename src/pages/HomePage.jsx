@@ -17,6 +17,7 @@ export default function HomePage() {
   const importJSON = useStore(s => s.importJSON)
   const clearSections = useStore(s => s.clearSections)
   const setVenueName = useStore(s => s.setVenueName)
+  const setFieldType = useStore(s => s.setFieldType)
 
   useEffect(() => {
     loadVenues().then(v => { setVenues(v); setLoading(false) })
@@ -26,6 +27,7 @@ export default function HomePage() {
     setCreating(true)
     clearSections()
     setVenueName('Untitled Venue')
+    setFieldType('none')
     // Save a blank venue to get an ID, then open editor
     const blank = useStore.getState()
     const saved = await saveVenue(blank)

@@ -24,9 +24,19 @@ export default function GridBlockEditor({ section, onUpdate }) {
   const [isDrawing, setIsDrawing] = useState(false)
   const [drawStart, setDrawStart] = useState(null)
   const [drawEnd, setDrawEnd] = useState(null)
+  const [confirmOff, setConfirmOff] = useState(false)
 
   const blocks = gridLayout.blocks || []
   const selectedBlock = blocks.find((b) => b.id === selectedBlockId)
+
+  const handleToggle = () => {
+    if (enabled && blocks.length > 0) {
+      setConfirmOff(true)  // show warning before clearing
+    } else {
+      // When enabling: clear old blockedSeats (IDs won't match new gridLayout seat IDs)
+      onUpdate({ gridDivisionEnabled: !enabled, ...(!enabled ? { showSeats: true, blockedSeats: [] } : {}) })
+    }
+  }
 
   const cellSize = 18
 
@@ -140,7 +150,7 @@ export default function GridBlockEditor({ section, onUpdate }) {
         <span style={{ fontSize: 10, fontWeight: 700, color: t.labelColor, textTransform: 'uppercase', letterSpacing: '0.1em' }}>
           Seat Division (Visual Editor)
         </span>
-        <button onClick={() => onUpdate({ gridDivisionEnabled: !enabled, ...(!enabled ? { showSeats: true } : {}) })}
+        <button onClick={handleToggle}
           style={{ width: 36, height: 20, borderRadius: 10, border: 'none', cursor: 'pointer', position: 'relative', background: enabled ? t.accent : t.inputBorder, transition: 'background 0.2s', flexShrink: 0 }}>
           <span style={{ position: 'absolute', top: 2, left: enabled ? 18 : 2, width: 16, height: 16, borderRadius: '50%', background: '#fff', transition: 'left 0.2s' }} />
         </button>
@@ -596,6 +606,27 @@ export default function GridBlockEditor({ section, onUpdate }) {
         </div>
       )}
     </>}
+
+    {confirmOff && (
+      <>
+        <div onClick={() => setConfirmOff(false)} style={{ position: 'fixed', inset: 0, zIndex: 199, background: 'rgba(0,0,0,0.55)' }} />
+        <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', zIndex: 200, background: t.panelBg, border: `1px solid ${t.panelBorder}`, borderRadius: 12, padding: 24, width: 300, boxShadow: '0 16px 48px rgba(0,0,0,0.4)' }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: t.inputColor, marginBottom: 10 }}>⚠️ Disable Seat Division?</div>
+          <div style={{ fontSize: 13, color: t.labelColor, lineHeight: 1.6, marginBottom: 20 }}>
+            This will <b style={{ color: '#f87171' }}>permanently delete all seat blocks</b> you have drawn. This cannot be undone.
+          </div>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button onClick={() => setConfirmOff(false)} style={{ padding: '6px 16px', borderRadius: 6, border: `1px solid ${t.inputBorder}`, background: 'none', color: t.inputColor, cursor: 'pointer', fontSize: 13 }}>Cancel</button>
+            <button onClick={() => {
+              onUpdate({ gridDivisionEnabled: false, gridLayout: { ...gridLayout, blocks: [] }, blockedSeats: [] })
+              setConfirmOff(false)
+            }} style={{ padding: '6px 16px', borderRadius: 6, border: 'none', background: '#ef4444', color: '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
+              Delete & Disable
+            </button>
+          </div>
+        </div>
+      </>
+    )}
     </div>
   )
 }

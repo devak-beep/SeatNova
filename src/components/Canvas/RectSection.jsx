@@ -83,8 +83,8 @@ export default function RectSection({
           )
         })}
 
-        {/* Curve handle for selected row — only in row select mode, no gridLayout */}
-        {rowSelectMode && !section.gridLayout?.blocks?.length && selectedRowIdx != null && rowMap[selectedRowIdx] && (() => {
+        {/* Curve handle for selected row */}
+        {rowSelectMode && selectedRowIdx != null && rowMap[selectedRowIdx] && (() => {
           const rowSeats = rowMap[selectedRowIdx]
           const midSeat = rowSeats[Math.floor(rowSeats.length / 2)]
           const hx = midSeat.x

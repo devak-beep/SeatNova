@@ -21,7 +21,7 @@ function snapshot(sections) {
 export const useStore = create(persist((set, get) => ({
   venueName: 'My Venue',
   venueShape: 'circular',
-  fieldType: 'cricket',
+  fieldType: 'none',
   fieldX: 500,
   fieldY: 500,
   fieldScale: 1,
@@ -105,6 +105,11 @@ export const useStore = create(persist((set, get) => ({
   setRowSelectMode: (v)  => set({ rowSelectMode: v, selectedRowIdx: null, selectedRowIdxs: [] }),
   setBlockRowMode:  (v)  => set({ blockRowMode: v }),
 
+  // ── categories ────────────────────────────────────────────────────────────
+  addCategory: (cat) => set(s => ({ categories: [...s.categories, { id: nanoid(), ...cat }] })),
+  updateCategory: (id, patch) => set(s => ({ categories: s.categories.map(c => c.id === id ? { ...c, ...patch } : c) })),
+  deleteCategory: (id) => set(s => ({ categories: s.categories.filter(c => c.id !== id) })),
+
   // ── sections (all mutating ops push history first) ────────────────────────
   addRow: (row) => {
     get()._pushHistory()
@@ -173,6 +178,7 @@ export const useStore = create(persist((set, get) => ({
   },
 
   toggleBlockSeat: (secId, seatId) => {
+    get()._pushHistory()
     set(s => ({
       sections: s.sections.map(sec => {
         if (sec.id !== secId) return sec
@@ -183,6 +189,7 @@ export const useStore = create(persist((set, get) => ({
   },
 
   toggleBlockRow: (secId, rowSeatIds) => {
+    get()._pushHistory()
     set(s => ({
       sections: s.sections.map(sec => {
         if (sec.id !== secId) return sec
@@ -199,6 +206,7 @@ export const useStore = create(persist((set, get) => ({
   },
 
   toggleRemoveSeat: (secId, seatId) => {
+    get()._pushHistory()
     set(s => ({
       sections: s.sections.map(sec => {
         if (sec.id !== secId) return sec
@@ -332,7 +340,7 @@ export const useStore = create(persist((set, get) => ({
   name: 'seatnova-store',
   version: 3,
   migrate: () => ({
-    venueName: 'My Venue', venueShape: 'circular', fieldType: 'cricket',
+    venueName: 'My Venue', venueShape: 'circular', fieldType: 'none',
     fieldX: 500, fieldY: 500, fieldScale: 1,
     stageX: 500, stageY: 500, stageW: 260, stageH: 120, stageLocked: false,
     canvasSize: 1000,

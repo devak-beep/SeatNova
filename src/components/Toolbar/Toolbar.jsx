@@ -352,7 +352,7 @@ function CloudModal({ onClose, t, storeState, importJSON }) {
 }
 
 export default function Toolbar({ onPreview, onSave, onHome, saveStatus }) {
-  const { tool, setTool, venueName, exportJSON, importJSON, undo, redo, past, future, selectedId, selectedIds, duplicateSection, theme, toggleTheme, applySpacing } = useStore()
+  const { tool, setTool, venueName, exportJSON, importJSON, undo, redo, past, future, selectedId, selectedIds, duplicateSection, deleteSection, theme, toggleTheme, applySpacing } = useStore()
   const t = useContext(ThemeContext)
   const [showValidate, setShowValidate] = useState(false)
   const [showSpacing, setShowSpacing] = useState(false)
@@ -449,8 +449,8 @@ export default function Toolbar({ onPreview, onSave, onHome, saveStatus }) {
   return (
     <div style={bar}>
       {/* Logo */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginRight: 4, flexShrink: 0 }}>
-        <svg width="32" height="32" viewBox="0 0 80 80" fill="none">
+      <div onClick={onHome} style={{ display: 'flex', alignItems: 'center', gap: 9, marginRight: 4, flexShrink: 0, cursor: onHome ? 'pointer' : 'default' }}>
+        <svg width="40" height="40" viewBox="0 0 80 80" fill="none">
           <circle cx="40" cy="40" r="36" stroke={isDark ? '#6d28d9' : '#7c3aed'} strokeWidth="2.5" opacity="0.6" />
           <rect x="27" y="32" width="26" height="16" rx="2" fill={isDark ? '#6d28d9' : '#7c3aed'} opacity="0.35" />
           <circle cx="38" cy="12" r="2.5" fill={isDark ? '#a78bfa' : '#7c3aed'} />
@@ -463,8 +463,8 @@ export default function Toolbar({ onPreview, onSave, onHome, saveStatus }) {
           <circle cx="12" cy="38" r="2.5" fill={isDark ? '#a78bfa' : '#7c3aed'} />
         </svg>
         <div style={{ lineHeight: 1.1 }}>
-          <div style={{ fontWeight: 800, fontSize: 15, color: isDark ? '#a78bfa' : '#7c3aed', letterSpacing: '-0.02em' }}>SeatNova</div>
-          <div style={{ fontSize: 9.5, color: t.labelColor, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Layout Builder</div>
+          <div style={{ fontWeight: 800, fontSize: 17, color: isDark ? '#a78bfa' : '#7c3aed', letterSpacing: '-0.02em' }}>SeatNova</div>
+          <div style={{ fontSize: 10.5, color: t.labelColor, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Layout Builder</div>
         </div>
       </div>
 
@@ -509,6 +509,18 @@ export default function Toolbar({ onPreview, onSave, onHome, saveStatus }) {
             ⚡ Spacing
           </button>
         )}
+        {(selectedId || selectedIds.length > 0) && (
+          <button
+            onClick={() => {
+              if (selectedIds.length > 0) selectedIds.forEach(id => deleteSection(id))
+              else deleteSection(selectedId)
+            }}
+            style={{ ...actionBtn('#dc2626'), padding: '5px 10px' }}
+            title="Delete selected"
+          >
+            🗑 Delete
+          </button>
+        )}
         <button onClick={() => setShowValidate(true)} style={ghostBtn} title="Validate layout">
           ✓ Validate
         </button>
@@ -535,9 +547,7 @@ export default function Toolbar({ onPreview, onSave, onHome, saveStatus }) {
         <button onClick={toggleTheme} style={{ ...ghostBtn, padding: '5px 8px', fontSize: 15 }} title="Toggle theme">
           {isDark ? '☀️' : '🌙'}
         </button>
-        {onHome && (
-          <button onClick={onHome} style={{ ...ghostBtn, padding: '5px 8px' }} title="Home">⌂</button>
-        )}
+        
       </div>
 
       {showValidate && <ValidateModal onClose={() => setShowValidate(false)} t={t} />}

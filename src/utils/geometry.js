@@ -322,12 +322,18 @@ export function generateRectSeatsFromBlocks(sec) {
         const gapY = countBefore(rowBoundaries, row) * blockRowGap
         const gapX = countBefore(colBoundaries, col) * blockColGap
         const seatX = sec.x + colStep * (col + 0.5) + gapX
-        const seatY = sec.y + rowStep * (row + 0.5) + gapY
+        const baseSeatY = sec.y + rowStep * (row + 0.5) + gapY
+        // Apply row curve (same as normal rect mode)
+        const colsInRow = block.colEnd - block.colStart
+        const t = colsInRow === 0 ? 0 : (col - (block.colStart - 1)) / colsInRow
+        const curve = (sec.rowCurves && sec.rowCurves[row] != null) ? sec.rowCurves[row] : 0
+        const curveOffset = curve * 4 * t * (t - 1)
+        const seatY = baseSeatY + curveOffset
         const blockRow = row - (block.rowStart - 1) + 1
         const blockCol = col - (block.colStart - 1) + 1
         const id = `${sec.label}-${block.name.replace(/\s+/g, '')}-R${blockRow}C${blockCol}`
 
-        seats.push({ id, x: seatX, y: seatY, color: block.color || '#94a3b8', category: block.category, price: block.price, blockId: block.id, removed: removed.has(id), rowIdx: `${block.id}-${row}` })
+        seats.push({ id, x: seatX, y: seatY, color: block.color || '#94a3b8', category: block.category, price: block.price, blockId: block.id, removed: removed.has(id), rowIdx: row })
       }
     }
   })

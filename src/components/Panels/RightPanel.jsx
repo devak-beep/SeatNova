@@ -23,14 +23,32 @@ function ColGroupsPanel({ sec, update, categories, inp, t }) {
       const cat = val ? categories.find(c => c.id === val) : null
       next[i].color = cat?.color || null
     }
-    update('colGroups', next)
+    // Auto-resize section width to fit all seats + gaps
+    const inset = 6
+    const uw = sec.w - inset * 2
+    const totalSeats = next.reduce((s, g) => s + (g.seats || 1), 0)
+    const totalGaps = next.reduce((s, g) => s + (g.gap || 0), 0)
+    const colStep = totalSeats > 1 ? (uw - totalGaps) / (totalSeats - 1) : uw
+    const requiredW = inset * 2 + Math.max(colStep, 20) * (totalSeats - 1) + totalGaps
+    const patch = { colGroups: next }
+    if (requiredW > sec.w) patch.w = Math.ceil(requiredW)
+    updateSection(sec.id, patch)
   }
 
   const addColGroup = () => {
     const defaultSeats = colGroups.length === 0
       ? Math.ceil((sec.rowGroups?.[0]?.seatsPerRow || 10) / 2)
       : 5
-    update('colGroups', [...colGroups, { seats: defaultSeats, category: '', color: null, gap: 20 }])
+    const next = [...colGroups, { seats: defaultSeats, category: '', color: null, gap: 20 }]
+    const inset = 6
+    const uw = sec.w - inset * 2
+    const totalSeats = next.reduce((s, g) => s + (g.seats || 1), 0)
+    const totalGaps = next.reduce((s, g) => s + (g.gap || 0), 0)
+    const colStep = totalSeats > 1 ? (uw - totalGaps) / (totalSeats - 1) : uw
+    const requiredW = inset * 2 + Math.max(colStep, 20) * (totalSeats - 1) + totalGaps
+    const patch = { colGroups: next }
+    if (requiredW > sec.w) patch.w = Math.ceil(requiredW)
+    updateSection(sec.id, patch)
   }
 
   const removeColGroup = (i) => {
@@ -229,7 +247,27 @@ export default function RightPanel() {
         <SectionBlock title="Shape" t={t}>
           <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
             {[{ id: 'round', icon: '⬤', label: 'Round' }, { id: 'rect', icon: '▬', label: 'Rect' }].map(s => (
-              <button key={s.id} onClick={() => update('tableShape', s.id)}
+              <button key={s.id} onClick={() => {
+                if (s.id === sec.tableShape) return
+                if (s.id === 'rect') {
+                  // round → rect: distribute chairs across 4 sides
+                  const c = sec.chairs ?? 8
+                  const side = Math.floor(c / 4)
+                  const extra = c % 4
+                  update('tableShape', 'rect')
+                  updateSection(sec.id, {
+                    tableShape: 'rect',
+                    seatsTop:    side + (extra > 0 ? 1 : 0),
+                    seatsBottom: side + (extra > 1 ? 1 : 0),
+                    seatsLeft:   side + (extra > 2 ? 1 : 0),
+                    seatsRight:  side,
+                  })
+                } else {
+                  // rect → round: sum all sides into chairs
+                  const total = (sec.seatsTop ?? 2) + (sec.seatsBottom ?? 2) + (sec.seatsLeft ?? 1) + (sec.seatsRight ?? 1)
+                  updateSection(sec.id, { tableShape: 'round', chairs: total })
+                }
+              }}
                 style={{ flex: 1, padding: '7px 4px', borderRadius: 7, border: `1px solid ${sec.tableShape === s.id ? t.accent : t.inputBorder}`, background: sec.tableShape === s.id ? `${t.accent}22` : t.inputBg, color: sec.tableShape === s.id ? t.accent : t.labelColor, fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, fontWeight: sec.tableShape === s.id ? 700 : 400 }}>
                 <span>{s.icon}</span> {s.label}
               </button>
@@ -253,17 +291,26 @@ export default function RightPanel() {
             </div>
           )}
 
-          {sec.tableShape === 'round' && (<>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-              <span style={{ fontSize: 12, color: t.inputColor }}>Auto radius</span>
-              <Toggle value={sec.autoRadius ?? true} onChange={v => update('autoRadius', v)} />
-            </div>
-            {!(sec.autoRadius ?? true) && (
-              <Field label="Radius" t={t}>
+          {sec.tableShape === 'round' && (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <Field label="Diameter" t={t}>
                 <NumInput value={sec.tableW ?? 80} min={20} max={400} onChange={v => update('tableW', v)} />
               </Field>
-            )}
-          </>)}
+              <Field label="Auto-fit" t={t}>
+                <div style={{ display: 'flex', alignItems: 'center', height: 30 }}>
+                  <Toggle value={sec.autoRadius ?? true} onChange={v => update('autoRadius', v)} />
+                  <span style={{ fontSize: 11, color: t.labelColor, marginLeft: 6 }}>{(sec.autoRadius ?? true) ? 'On' : 'Off'}</span>
+                </div>
+              </Field>
+            </div>
+          )}
+
+          {/* Seat size — both table types */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
+            <span style={{ fontSize: 12, color: t.labelColor }}>Seat Size</span>
+            <NumInput value={sec.chairSize ?? Math.max(6, Math.min(sec.tableW ?? 100, sec.tableH ?? 60) * 0.12) | 0} min={4} max={40}
+              onChange={v => update('chairSize', v)} />
+          </div>
         </SectionBlock>
 
         <SectionBlock title="Chairs & Spaces" t={t}>
@@ -290,8 +337,13 @@ export default function RightPanel() {
             </div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <span style={{ fontSize: 12, color: t.labelColor }}>Open spaces</span>
-              <NumInput value={openSpaces} min={0} max={20} onChange={v => update('openSpaces', v)} />
+              <NumInput value={openSpaces} min={0} max={20} onChange={v => { update('openSpaces', v); update('openSpaceIndices', null) }} />
             </div>
+            {openSpaces > 0 && (
+              <div style={{ fontSize: 11, color: t.labelColor, marginTop: 6, lineHeight: 1.5 }}>
+                💡 Shift+click any chair on canvas to move an open space to that position.
+              </div>
+            )}
           </>)}
         </SectionBlock>
 
@@ -537,14 +589,6 @@ export default function RightPanel() {
           <input style={inp} type="number" value={sec.price} onChange={e => update('price', Number(e.target.value))} />
         </Field>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-          <Field label="Seat Type" t={t}>
-            <select style={inp} value={sec.seatType || 'standard'} onChange={e => update('seatType', e.target.value)}>
-              <option value="standard">Standard</option>
-              <option value="vip">VIP</option>
-              <option value="accessible">Accessible</option>
-              <option value="standing">Standing</option>
-            </select>
-          </Field>
           <Field label="Status" t={t}>
             <select style={inp} value={sec.status || 'available'} onChange={e => update('status', e.target.value)}>
               <option value="available">Available</option>
@@ -612,7 +656,7 @@ export default function RightPanel() {
 
         {(sec.type === 'rect' || sec.type === 'arc') ? (
           <>
-            {sec.type === 'rect' && !sec.gridLayout?.blocks?.length && (() => {
+        {sec.type === 'rect' && (() => {
               const hasSelection = selectedRowIdxs.length > 0
               const rowCurves = sec.rowCurves || []
               const curveVal = hasSelection ? (rowCurves[selectedRowIdx] ?? 0) : 0
